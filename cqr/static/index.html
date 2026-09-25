@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Conversation Quality Reviewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg:#f6f7f9; --panel:#fff; --ink:#1b1f24; --muted:#5f6b7a; --line:#e3e7ec;
+    --red:#c62828; --amber:#b26a00; --green:#2e7d32; --blue:#1565c0; --hl:#fff3c4;
+  }
+  * { box-sizing:border-box }
+  body { margin:0; font:14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg) }
+  header { padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center }
+  header h1 { font-size:16px; margin:0 }
+  header .meta { color:var(--muted); font-size:12px }
+  header label { font-size:12px; color:var(--muted); margin-left:auto }
+  main { display:grid; grid-template-columns: 380px 1fr; height: calc(100vh - 49px) }
+  #list { overflow:auto; border-right:1px solid var(--line); background:var(--panel) }
+  #detail { overflow:auto; padding:20px }
+  .row { padding:10px 14px; border-bottom:1px solid var(--line); cursor:pointer }
+  .row:hover, .row.active { background:#eef3fb }
+  .row .id { font-weight:600; font-size:13px }
+  .row .sum { color:var(--muted); font-size:12px; margin-top:2px }
+  .badges { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px }
+  .b { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--muted); background:#fafbfc }
+  .b.red { color:#fff; background:var(--red); border-color:var(--red) }
+  .b.amber { color:#fff; background:var(--amber); border-color:var(--amber) }
+  .b.green { color:#fff; background:var(--green); border-color:var(--green) }
+  .b.blue { color:#fff; background:var(--blue); border-color:var(--blue) }
+  .tier { color:var(--muted); font-size:11px; letter-spacing:.06em; text-transform:uppercase; margin:18px 0 8px }
+  .cards { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap:10px }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px }
+  .card h3 { margin:0 0 4px; font-size:13px; display:flex; justify-content:space-between; align-items:center }
+  .card p { margin:4px 0 0; color:var(--muted); font-size:13px }
+  .card .turns { margin-top:6px }
+  .card .turns a { font-size:11px; color:var(--blue); margin-right:6px; cursor:pointer; text-decoration:underline }
+  .flag { border-left:4px solid var(--red) }
+  .flag.medium { border-left-color:var(--amber) }
+  .flag.low { border-left-color:var(--muted) }
+  #transcript { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 0; margin-top:8px }
+  .t { padding:5px 14px; display:grid; grid-template-columns: 34px 80px 1fr; gap:8px }
+  .t.hl { background:var(--hl) }
+  .t .i { color:var(--muted); font-size:11px; padding-top:2px }
+  .t .s { font-size:11px; font-weight:600; text-transform:uppercase; padding-top:2px }
+  .t.customer .s { color:var(--blue) } .t.agent .s { color:var(--green) } .t.system .s { color:var(--muted) }
+  .ref { white-space:pre-wrap; font-size:12px; color:var(--muted); background:var(--panel); border:1px dashed var(--line); border-radius:8px; padding:10px 14px; max-height:220px; overflow:auto }
+  svg.spark { width:100%; height:60px }
+  .empty { color:var(--muted); padding:40px }
+  code { background:#eef1f4; padding:0 4px; border-radius:3px }
+</style>
+</head>
+<body>
+<header>
+  <h1>Conversation Quality Reviewer</h1>
+  <span class="meta" id="count"></span>
+  <label><input type="checkbox" id="onlyFlag"> needs human review only</label>
+</header>
+<main>
+  <div id="list"></div>
+  <div id="detail"><div class="empty">Select a conversation. List is sorted riskiest first.</div></div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let reviews = [], active = null;
+
+const LEVEL_COLOR = {
+  resolution: {resolved:'green', deferred_with_owner:'blue', partially_resolved:'amber', unresolved:'red'},
+  correctness: {supported:'green', unverifiable:'', contradicted:'red'},
+  customer_effort: {low:'green', medium:'amber', high:'red'},
+  interaction_quality: {high:'green', medium:'amber', low:'red'},
+};
+const badge = (txt, cls='') => `<span class="b ${cls}">${txt}</span>`;
+
+async function load() {
+  const q = $('#onlyFlag').checked ? '?needs_human_review=true' : '';
+  reviews = await (await fetch('/reviews' + q)).json();
+  $('#count').textContent = `${reviews.length} conversations · ${reviews.filter(r=>r.needs_human_review).length} need review`;
+  renderList();
+}
+
+function renderList() {
+  $('#list').innerHTML = reviews.map(r => `
+    <div class="row ${r.transcript_id===active?'active':''}" data-id="${r.transcript_id}">
+      <div class="id">${r.needs_human_review?'⚠ ':''}${r.transcript_id} <span class="b">${r.source}</span></div>
+      <div class="sum">${r.summary || ''}</div>
+      <div class="badges">
+        ${r.risk_flags.map(f=>badge(f.type.replace(/_/g,' '), f.severity==='high'?'red':f.severity==='medium'?'amber':'')).join('')}
+        ${badge(r.resolution.level.replace(/_/g,' '), LEVEL_COLOR.resolution[r.resolution.level])}
+        ${badge('correctness: '+r.correctness.level, LEVEL_COLOR.correctness[r.correctness.level])}
+        ${badge('effort '+r.customer_effort.level, LEVEL_COLOR.customer_effort[r.customer_effort.level])}
+      </div>
+    </div>`).join('');
+  document.querySelectorAll('.row').forEach(el => el.onclick = () => open(el.dataset.id));
+}
+
+function sparkline(traj) {
+  if (!traj || traj.length < 2) return '<p class="meta">not enough customer turns</p>';
+  const w=300, h=60, pad=6;
+  const xs = traj.map((p,i)=> pad + i*(w-2*pad)/(traj.length-1));
+  const ys = traj.map(p => h/2 - p.score*(h/2-pad));
+  const pts = xs.map((x,i)=>`${x},${ys[i]}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}">
+    <line x1="0" y1="${h/2}" x2="${w}" y2="${h/2}" stroke="#e3e7ec"/>
+    <polyline fill="none" stroke="#1565c0" stroke-width="2" points="${pts}"/>
+    ${xs.map((x,i)=>`<circle cx="${x}" cy="${ys[i]}" r="3" fill="#1565c0"><title>turn ${traj[i].turn}: ${traj[i].score}</title></circle>`).join('')}
+  </svg>`;
+}
+
+function card(title, sig, kind) {
+  const cls = LEVEL_COLOR[kind]?.[sig.level] ?? '';
+  return `<div class="card">
+    <h3>${title} ${badge(sig.level.replace(/_/g,' '), cls)}</h3>
+    <p>${sig.rationale}</p>
+    <div class="turns">${(sig.turns||[]).map(i=>`<a data-turn="${i}">turn ${i}</a>`).join('')}</div>
+  </div>`;
+}
+
+async function open(id) {
+  active = id; renderList();
+  const {transcript:t, review:r} = await (await fetch('/reviews/'+id)).json();
+  const flags = r.risk_flags.length ? r.risk_flags.map(f => `
+    <div class="card flag ${f.severity}">
+      <h3>${f.type.replace(/_/g,' ')} ${badge(f.severity, f.severity==='high'?'red':f.severity==='medium'?'amber':'')}</h3>
+      <p>${f.rationale}</p>
+      <div class="turns">${f.turns.map(i=>`<a data-turn="${i}">turn ${i}</a>`).join('')}</div>
+    </div>`).join('') : `<div class="card"><h3>No risk flags</h3></div>`;
+
+  $('#detail').innerHTML = `
+    <h2 style="margin:0">${r.needs_human_review?'⚠ ':''}${t.id}</h2>
+    <div class="meta" style="color:var(--muted)">source ${t.source} · intent ${t.intent||'—'} · judge <code>${r.judge}</code> · sentiment Δ ${r.sentiment_delta>0?'+':''}${r.sentiment_delta}</div>
+    <p style="margin:8px 0 0">${r.summary}</p>
+
+    <div class="tier">Tier 1 · must know</div>
+    <div class="cards">${flags}${card('Resolution', r.resolution, 'resolution')}${card('Correctness', r.correctness, 'correctness')}</div>
+
+    <div class="tier">Tier 2 · explain the experience</div>
+    <div class="cards">${card('Customer effort', r.customer_effort, 'customer_effort')}${card('Interaction quality', r.interaction_quality, 'interaction_quality')}</div>
+
+    <div class="tier">Context · customer sentiment by turn</div>
+    <div class="card">${sparkline(r.sentiment_trajectory)}</div>
+
+    <div class="tier">Transcript</div>
+    <div id="transcript">${t.turns.map(x=>`<div class="t ${x.speaker}" id="turn-${x.idx}"><span class="i">${x.idx}</span><span class="s">${x.speaker}</span><span>${esc(x.text)}</span></div>`).join('')}</div>
+
+    <div class="tier">Reference the agent was judged against</div>
+    <div class="ref">${t.reference ? esc(t.reference) : '(none — correctness is unverifiable for this conversation)'}</div>
+  `;
+  document.querySelectorAll('[data-turn]').forEach(a => a.onclick = () => {
+    document.querySelectorAll('.t.hl').forEach(e=>e.classList.remove('hl'));
+    const el = $('#turn-'+a.dataset.turn); if (el) { el.classList.add('hl'); el.scrollIntoView({block:'center', behavior:'smooth'}); }
+  });
+}
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+$('#onlyFlag').onchange = load;
+load();
+</script>
+</body>
+</html>
