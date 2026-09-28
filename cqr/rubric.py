@@ -23,6 +23,8 @@ Flag anything a supervisor must see today. Types:
 - abusive_agent: agent is rude, dismissive, sarcastic, or blames the customer.
 Severity: high = clear and consequential (PII, explicit legal threat, hostile agent, guaranteed promise contrary to policy); medium = present but ambiguous or lower stakes; low = mild mention.
 
+Emission rule: emit at most ONE flag per (type, severity) pair. If the same risk type recurs across turns at the SAME severity, aggregate every turn index into that single flag's `turns` array — do not repeat the flag. If the same risk type recurs at DIFFERENT severities (e.g. a high CVV request at turn 4 and a low masked-digit echo at turn 15), emit one flag per severity with its own turns. The pipeline enforces this rule after your output — duplicate (type, severity) entries will be merged — so producing them directly saves a round-trip.
+
 ## 2. resolution  -- TIER 1
 - resolved: the customer's stated goal is met within the conversation (or an action is completed that meets it).
 - partially_resolved: some of what they asked for is done, the rest is not and there is no concrete next step.
