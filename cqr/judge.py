@@ -45,7 +45,6 @@ def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
             "turns": [],
         }
     review = Review.model_validate(raw)
-    review.risk_flags = _dedupe_risk_flags(review.risk_flags)
 
     traj = sorted(review.sentiment_trajectory, key=lambda p: p.turn)
     review.sentiment_trajectory = traj
@@ -55,35 +54,6 @@ def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
         or review.correctness.level == Correctness.contradicted.value
     )
     return review
-
-
-def _dedupe_risk_flags(flags: list[RiskFlag]) -> list[RiskFlag]:
-    """Normalize the judge's risk flags to exactly one entry per (type, severity):
-    aggregate turn indices, dedupe-and-join rationales, sort deterministically.
-
-    Grouping by (type, severity) — not just type — preserves the case where the
-    same risk recurs at different severities (e.g. a high CVV request and a low
-    masked-echo), which must remain separate flags. Same (type, severity)
-    duplicates collapse into one flag whose turns cover every cited instance."""
-    sev_order = {"high": 0, "medium": 1, "low": 2}
-    grouped: dict[tuple[str, str], RiskFlag] = {}
-    for f in flags:
-        key = (f.type.value, f.severity.value)
-        if key not in grouped:
-            grouped[key] = RiskFlag(type=f.type, severity=f.severity,
-                                    rationale=f.rationale, turns=list(f.turns))
-            continue
-        g = grouped[key]
-        for t in f.turns:
-            if t not in g.turns:
-                g.turns.append(t)
-        r = (f.rationale or "").strip()
-        if r and r not in g.rationale:
-            g.rationale = f"{g.rationale} | {r}" if g.rationale else r
-    for g in grouped.values():
-        g.turns = sorted(set(g.turns))
-    return sorted(grouped.values(),
-                  key=lambda g: (sev_order.get(g.severity.value, 99), g.type.value))
 
 
 def _extract_json(text: str) -> dict:

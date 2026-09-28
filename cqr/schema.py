@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------- input ----
@@ -89,6 +89,36 @@ class SentimentPoint(BaseModel):
     score: float = Field(ge=-1, le=1)
 
 
+_SEV_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _dedupe_risk_flags(flags: list[RiskFlag]) -> list[RiskFlag]:
+    """Normalize risk flags to exactly one entry per (type, severity):
+    aggregate turns, dedupe-and-join rationales, sort deterministically.
+
+    Grouping by (type, severity) — not just type — preserves the case where the
+    same risk recurs at different severities (e.g. a high CVV request and a low
+    masked-digit echo), which must remain separate flags."""
+    grouped: dict[tuple[str, str], RiskFlag] = {}
+    for f in flags:
+        key = (f.type.value, f.severity.value)
+        if key not in grouped:
+            grouped[key] = RiskFlag(type=f.type, severity=f.severity,
+                                    rationale=f.rationale, turns=list(f.turns))
+            continue
+        g = grouped[key]
+        for t in f.turns:
+            if t not in g.turns:
+                g.turns.append(t)
+        r = (f.rationale or "").strip()
+        if r and r not in g.rationale:
+            g.rationale = f"{g.rationale} | {r}" if g.rationale else r
+    for g in grouped.values():
+        g.turns = sorted(set(g.turns))
+    return sorted(grouped.values(),
+                  key=lambda g: (_SEV_ORDER.get(g.severity.value, 99), g.type.value))
+
+
 class Review(BaseModel):
     transcript_id: str
     source: str
@@ -111,6 +141,13 @@ class Review(BaseModel):
     judge: str = Field(description="which judge produced this: anthropic:<model> | heuristic")
     needs_human_review: bool = Field(default=False, description="True when any risk flag is medium+ or correctness is contradicted")
     summary: str = Field(default="", description="One line a supervisor can read in a list view")
+
+    @model_validator(mode="after")
+    def _enforce_invariants(self):
+        """Contract-level invariants enforced at construction. Any code path that
+        builds a Review — judge output, API request, test fixture — obeys these."""
+        self.risk_flags = _dedupe_risk_flags(self.risk_flags)
+        return self
 
     @property
     def max_risk(self) -> int:
