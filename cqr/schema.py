@@ -271,3 +271,18 @@ class BatchAccepted(BaseModel):
     job_id: str
     status: JobStatus
     total: int
+
+
+# --------------------------------------------------------------- errors ----
+
+class ErrorBody(BaseModel):
+    """Uniform body for every non-2xx response this API emits, except
+    FastAPI's own 422 validation error (which keeps its native
+    `{"detail": [...]}` shape). `error_type` tells the client exactly which
+    failure fired; `retryable` tells them whether to retry; `retry_after_s`
+    mirrors the `Retry-After` header for clients that don't inspect headers."""
+    error_type: str = Field(description="Name of the fired class: JudgeUnavailable | JudgeRejected | TranscriptRejected | JudgeOutputInvalid | QueueFull | NotFound | PayloadTooLarge")
+    message: str
+    retryable: bool
+    attempts: Optional[int] = Field(default=None, description="Provider calls made on this item, if the failure came from the judge.")
+    retry_after_s: Optional[int] = Field(default=None, description="Present when the response also carries a `Retry-After` header.")

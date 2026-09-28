@@ -1,19 +1,20 @@
 """
 HTTP contract.
 
-  POST /review               body: Transcript                   -> Review          (sync, one conversation)
-  POST /review/batch         body: {transcripts: [...]}         -> 202 BatchAccepted (or 200 Job with ?wait=true)
-  GET  /jobs                                                    -> [Job]
-  GET  /jobs/{id}                                               -> Job
-  GET  /jobs/{id}/reviews                                       -> [Review]       riskiest first
-  GET  /reviews              ?needs_human_review=&source=&job_id=  -> [Review]  sorted riskiest first
-  GET  /reviews/{id}                                            -> {transcript, review}
-  GET  /                                                        -> dashboard
+  POST /review                   Transcript                        -> 200 Review
+  POST /review/batch             {transcripts: [...]}              -> 202 BatchAccepted (or 200 Job with ?wait=true)
+  GET  /jobs                                                       -> 200 [Job]
+  GET  /jobs/{id}                                                  -> 200 Job | 404
+  GET  /jobs/{id}/reviews                                          -> 200 [Review] riskiest first
+  GET  /reviews  ?needs_human_review=&source=&job_id=              -> 200 [Review]
+  GET  /reviews/{id}                                               -> 200 {transcript, review} | 404
+  GET  /health                                                     -> 200
+  GET  /                                                           -> dashboard
 
-Run:  uvicorn cqr.api:app --reload
-Env:  CQR_JUDGE=anthropic|heuristic   CQR_STORE=out/reviews.json   CQR_MODEL=...
-      CQR_CONCURRENCY=4               CQR_MAX_BATCH=200            CQR_BATCH_WAIT_S=60
-      CQR_CIRCUIT_THRESHOLD=5
+Every non-2xx response — including 404 and 429 — serializes to `ErrorBody`
+(schema.py) except FastAPI's own 422 body-validation error, which keeps its
+native `{"detail": [...]}` shape. See the README's Error contract section;
+`tests/test_error_contract.py` pins the spec against the code.
 """
 from __future__ import annotations
 
@@ -24,42 +25,18 @@ from pathlib import Path
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from pydantic import BaseModel, Field
-
-from .errors import JudgeError
+from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
+                     JudgeUnavailable, NotFoundError, PayloadTooLarge,
+                     QueueFull, TranscriptRejected)
 from .jobs import JobRunner, wait_for_job
 from .judge import get_judge
-from .schema import (BatchAccepted, BatchReviewRequest, Job, Review, Transcript,
-                     sort_key)
+from .schema import (BatchAccepted, BatchReviewRequest, ErrorBody, Job, Review,
+                     Transcript, sort_key)
 from .store import Store
 
 
-class ErrorEnvelope(BaseModel):
-    """Standard error body for classified judge failures. Shape mirrors
-    the JudgeError exception handler in this module."""
-    error_type: str = Field(description="Class name of the JudgeError subclass that fired.")
-    message: str
-    retryable: bool = Field(description="If true, an identical resubmit could succeed; the response also carries `Retry-After`.")
-    attempts: int = Field(description="Number of provider calls the judge made before giving up on this item.")
-
-
-class NotFoundEnvelope(BaseModel):
-    detail: str
-
-
-_JUDGE_ERROR_RESPONSES = {
-    500: {"model": ErrorEnvelope,
-          "description": "JudgeOutputInvalid — provider replied, but JSON never validated against the Review schema even after output retries."},
-    502: {"model": ErrorEnvelope,
-          "description": "JudgeRejected — provider refused authoritatively (bad key, wrong model, permission denied). Terminal, config-scope."},
-    503: {"model": ErrorEnvelope,
-          "description": "JudgeUnavailable — transient upstream failure (timeout, rate limit, connection drop). Response carries `Retry-After: 30`.",
-          "headers": {"Retry-After": {"schema": {"type": "integer"}, "description": "Seconds to wait before retrying."}}},
-}
-_TRANSCRIPT_ERROR_RESPONSE = {
-    422: {"model": ErrorEnvelope,
-          "description": "TranscriptRejected — provider rejected this specific transcript (too long, content policy). Terminal for this item; other items in a batch may still succeed."},
-}
+_MAX_BODY_BYTES = int(os.environ.get("CQR_MAX_BODY_BYTES", "5000000"))
+_RETRY_AFTER_S = 30
 
 _store = Store(Path(os.environ.get("CQR_STORE", "out/reviews.json")))
 _judge = None
@@ -80,6 +57,7 @@ def _make_runner() -> JobRunner:
         concurrency=int(os.environ.get("CQR_CONCURRENCY", "4")),
         max_jobs_kept=int(os.environ.get("CQR_MAX_JOBS_KEPT", "100")),
         circuit_threshold=int(os.environ.get("CQR_CIRCUIT_THRESHOLD", "5")),
+        max_queue_size=int(os.environ.get("CQR_MAX_QUEUE_SIZE", "0")),
     )
 
 
@@ -95,47 +73,159 @@ async def _lifespan(app: FastAPI):
         _runner = None
 
 
-app = FastAPI(title="Conversation Quality Reviewer", version="0.2", lifespan=_lifespan)
+# ------------------------------------------------------ error-contract matrix ----
+# Single source of truth for what statuses each route can return and what
+# body shape they carry. Reused in @app decorator responses={...} AND in
+# tests/test_error_contract.py (parity check) AND in the README (rendered by
+# scripts/render_error_table.py). Adding a status here without wiring the code
+# to emit it, or vice-versa, breaks the tests.
+
+
+def _err_response(error_type: str, description: str, header_retry_after: bool = False) -> dict:
+    """Build one responses={} entry for an ErrorBody-shaped error."""
+    entry: dict = {"model": ErrorBody, "description": description}
+    if header_retry_after:
+        entry["headers"] = {"Retry-After": {
+            "schema": {"type": "integer"},
+            "description": "Seconds to wait before retrying.",
+        }}
+    return entry
+
+
+_ERR_413 = _err_response("PayloadTooLarge",
+    "PayloadTooLarge — request body exceeded CQR_MAX_BODY_BYTES.")
+_ERR_422_MIXED = {
+    "description": ("Request body failed validation (HTTPValidationError, FastAPI's "
+                    "native `{detail: [...]}` shape) — OR TranscriptRejected: the "
+                    "provider accepted the request but rejected this transcript "
+                    "(too long, content policy). Callers must branch on body shape."),
+    "content": {"application/json": {"schema": {"oneOf": [
+        {"$ref": "#/components/schemas/HTTPValidationError"},
+        {"$ref": "#/components/schemas/ErrorBody"},
+    ]}}},
+}
+_ERR_429 = _err_response("QueueFull",
+    "QueueFull — in-process job queue at capacity. Retryable; back off and resubmit.",
+    header_retry_after=True)
+_ERR_500 = _err_response("JudgeOutputInvalid",
+    "JudgeOutputInvalid — provider replied but JSON never validated after retries.")
+_ERR_502 = _err_response("JudgeRejected",
+    "JudgeRejected — provider refused authoritatively (bad key, wrong model, permission denied). Terminal, config-scope.")
+_ERR_503 = _err_response("JudgeUnavailable",
+    "JudgeUnavailable — transient upstream failure. Retryable.",
+    header_retry_after=True)
+_ERR_404 = _err_response("NotFound",
+    "NotFound — no resource with that id (may have been LRU-evicted from the job table).")
+
+
+ERROR_RESPONSES: dict[str, dict[int, dict]] = {
+    "review_one":    {413: _ERR_413, 422: _ERR_422_MIXED, 500: _ERR_500, 502: _ERR_502, 503: _ERR_503},
+    "review_batch":  {413: _ERR_413, 422: _ERR_422_MIXED, 429: _ERR_429},
+    "list_jobs":     {},
+    "get_job":       {404: _ERR_404},
+    "get_job_reviews": {404: _ERR_404},
+    "list_reviews":  {},
+    "get_review":    {404: _ERR_404},
+    "health":        {},
+}
+
+
+# ---------------------------------------------------------- app + middleware ----
+
+_APP_DESCRIPTION = """
+Conversation Quality Reviewer — scores customer/agent transcripts on five
+anchored signals and exposes them as JSON.
+
+Every non-2xx response serializes to a uniform `ErrorBody` shape
+(`error_type`, `message`, `retryable`, `attempts`, `retry_after_s`), except
+FastAPI's own 422 body-validation error which keeps its native
+`{detail: [...]}` shape. See the README's **Error contract** section for the
+full status × error_type × client action matrix.
+"""
+
+_OPENAPI_TAGS = [
+    {"name": "review", "description": "Score transcripts one at a time or in batches."},
+    {"name": "jobs", "description": "Async batch queue: submit, poll, collect results."},
+    {"name": "reviews", "description": "Persisted reviews across all runs."},
+    {"name": "meta", "description": "Health and dashboard."},
+]
+
+
+app = FastAPI(
+    title="Conversation Quality Reviewer",
+    version="0.3",
+    description=_APP_DESCRIPTION,
+    openapi_tags=_OPENAPI_TAGS,
+    lifespan=_lifespan,
+)
+
+
+@app.middleware("http")
+async def _limit_body_size(request: Request, call_next):
+    """Reject oversize requests before body parsing. Uses Content-Length; a
+    missing header (chunked encoding) is allowed through — the endpoint's own
+    validation is the second line of defense."""
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            n = int(cl)
+        except ValueError:
+            n = 0
+        if n > _MAX_BODY_BYTES:
+            body = ErrorBody(
+                error_type="PayloadTooLarge",
+                message=f"request body {n} bytes exceeds CQR_MAX_BODY_BYTES={_MAX_BODY_BYTES}",
+                retryable=False,
+            )
+            return JSONResponse(status_code=413, content=body.model_dump())
+    return await call_next(request)
+
+
+# --------------------------------------------------------- exception handlers ----
+
+def _body(error_type: str, message: str, retryable: bool,
+          attempts: int | None = None, retry_after: int | None = None) -> dict:
+    return ErrorBody(
+        error_type=error_type, message=message, retryable=retryable,
+        attempts=attempts, retry_after_s=retry_after,
+    ).model_dump()
 
 
 @app.exception_handler(JudgeError)
 async def _judge_error_handler(request: Request, exc: JudgeError):
-    """Map a classified JudgeError onto HTTP: use the class's `http_status`,
-    body carries `error_type`/`message`/`retryable`/`attempts`, and 5xx-retryable
-    responses include a `Retry-After: 30` hint. Callers can react without
-    parsing exception text."""
-    headers = {}
-    if exc.retryable:
-        headers["Retry-After"] = "30"
+    headers = {"Retry-After": str(_RETRY_AFTER_S)} if exc.retryable else {}
+    retry_after = _RETRY_AFTER_S if exc.retryable else None
     return JSONResponse(
         status_code=exc.http_status,
-        content={
-            "error_type": type(exc).__name__,
-            "message": str(exc),
-            "retryable": exc.retryable,
-            "attempts": exc.attempts,
-        },
+        content=_body(type(exc).__name__, str(exc), exc.retryable,
+                      attempts=exc.attempts, retry_after=retry_after),
         headers=headers,
     )
 
 
-@app.get("/health", summary="Liveness check", include_in_schema=True)
-def health():
-    """Report basic process liveness without touching any provider. Returns
-    the resolved judge kind (heuristic/llm) and the concrete model, so a
-    load balancer or dashboard can confirm which configuration is live."""
-    judge_env = os.environ.get("CQR_JUDGE") or ("llm" if (
-        os.environ.get("ANTHROPIC_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("CQR_LLM_BASE_URL")
-    ) else "heuristic")
-    return {
-        "status": "ok",
-        "judge": judge_env,
-        "model": os.environ.get("CQR_MODEL", "claude-sonnet-4-5") if judge_env == "llm" else None,
-        "runner_started": _runner is not None,
-    }
+@app.exception_handler(QueueFull)
+async def _queue_full_handler(request: Request, exc: QueueFull):
+    return JSONResponse(
+        status_code=exc.http_status,
+        content=_body("QueueFull", str(exc), retryable=True, retry_after=_RETRY_AFTER_S),
+        headers={"Retry-After": str(_RETRY_AFTER_S)},
+    )
 
+
+@app.exception_handler(NotFoundError)
+async def _not_found_handler(request: Request, exc: NotFoundError):
+    return JSONResponse(
+        status_code=exc.http_status,
+        content=_body("NotFound", str(exc), retryable=False),
+    )
+
+
+# Note: PayloadTooLarge is only ever emitted directly by _limit_body_size
+# above (which returns a JSONResponse inline). No route raises it, so no
+# `@exception_handler(PayloadTooLarge)` is needed.
+
+
+# ---------------------------------------------------------------- transcripts ----
 
 _TRANSCRIPT_EXAMPLES = {
     "minimal": {
@@ -167,28 +257,28 @@ _TRANSCRIPT_EXAMPLES = {
 }
 
 
-@app.post("/review", response_model=Review, summary="Review a single conversation",
-          responses={**_JUDGE_ERROR_RESPONSES, **_TRANSCRIPT_ERROR_RESPONSE})
+# ------------------------------------------------------------------- routes ----
+
+@app.post("/review", response_model=Review, tags=["review"],
+          summary="Review a single conversation",
+          responses=ERROR_RESPONSES["review_one"])
 def review_one(t: Transcript = Body(openapi_examples=_TRANSCRIPT_EXAMPLES)):
     """Judge one transcript against the rubric. Returns a `Review` with per-signal
     levels, rationales, and turn citations. Blocks until the judge returns
-    (typically 5-15s for the Anthropic judge, <100ms for the heuristic judge).
-    The review is persisted to the store and appears in `/reviews` immediately."""
+    (typically 5-15s for the LLM judge, <100ms for the heuristic judge)."""
     r = judge().judge(t)
     _store.put(t, r)
     _store.flush()
     return r
 
 
-@app.post(
-    "/review/batch",
-    responses={
-        200: {"model": Job, "description": "Returned when ?wait=true and the job reached a terminal state within CQR_BATCH_WAIT_S."},
-        202: {"model": BatchAccepted, "description": "Job accepted and enqueued. Poll GET /jobs/{id}."},
-        503: {"description": "Job runner not started (called before app lifespan)."},
-    },
-    summary="Enqueue a batch of transcripts for async review",
-)
+@app.post("/review/batch", tags=["review"],
+          summary="Enqueue a batch of transcripts for async review",
+          responses={
+              200: {"model": Job, "description": "?wait=true and the job reached a terminal state within CQR_BATCH_WAIT_S."},
+              202: {"model": BatchAccepted, "description": "Job accepted and enqueued. Poll GET /jobs/{id}."},
+              **ERROR_RESPONSES["review_batch"],
+          })
 async def review_batch(
     req: BatchReviewRequest = Body(openapi_examples={
         "two_transcripts": {
@@ -200,14 +290,13 @@ async def review_batch(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     wait: bool = Query(default=False, description="If true, block up to CQR_BATCH_WAIT_S for the job to complete and return 200 with the Job."),
 ):
-    """Accept a batch of transcripts. Returns 202 immediately with a `BatchAccepted`
-    body carrying a `job_id` you can poll at `/jobs/{id}`. With `?wait=true`, block
-    up to `CQR_BATCH_WAIT_S` seconds (default 60) and return **200** with the full
-    `Job` if it reaches a terminal state in that window, otherwise 200 with the
-    still-running job snapshot. Duplicate `Idempotency-Key` returns the existing
-    job without re-enqueueing."""
+    """Accept a batch. 202 immediately with `{job_id, status, total}`; poll
+    `/jobs/{id}` or hit this endpoint with `?wait=true` to block up to
+    `CQR_BATCH_WAIT_S`. Duplicate `Idempotency-Key` returns the existing job.
+    Oversize batches (> `CQR_MAX_BATCH`) return 422; a full queue returns 429
+    with `Retry-After`."""
     if _runner is None:
-        raise HTTPException(503, "job runner not started")
+        raise QueueFull("job runner not started")
     job = _runner.submit(list(req.transcripts), idempotency_key=idempotency_key)
     if wait:
         wait_s = float(os.environ.get("CQR_BATCH_WAIT_S", "60"))
@@ -217,51 +306,49 @@ async def review_batch(
     return Response(content=accepted.model_dump_json(), status_code=202, media_type="application/json")
 
 
-@app.get("/jobs", response_model=list[Job], summary="List all jobs",
-         responses={503: {"description": "Job runner not started."}})
+@app.get("/jobs", response_model=list[Job], tags=["jobs"],
+         summary="List all jobs", responses=ERROR_RESPONSES["list_jobs"])
 def list_jobs():
     """Every job the runner still remembers (LRU-capped by `CQR_MAX_JOBS_KEPT`).
     Most recently created last."""
     if _runner is None:
-        raise HTTPException(503, "job runner not started")
+        return []
     return _runner.list_jobs()
 
 
-@app.get("/jobs/{id_}", response_model=Job, summary="Get one job",
-         responses={404: {"model": NotFoundEnvelope, "description": "No job with that id (may have been LRU-evicted)."},
-                    503: {"description": "Job runner not started."}})
+@app.get("/jobs/{id_}", response_model=Job, tags=["jobs"],
+         summary="Get one job", responses=ERROR_RESPONSES["get_job"])
 def get_job(id_: str):
     if _runner is None:
-        raise HTTPException(503, "job runner not started")
+        raise NotFoundError(f"no job {id_}")
     job = _runner.get(id_)
     if job is None:
-        raise HTTPException(404, f"no job {id_}")
+        raise NotFoundError(f"no job {id_}")
     return job
 
 
-@app.get("/jobs/{id_}/reviews", response_model=list[Review], summary="Reviews produced by a job",
-         responses={404: {"model": NotFoundEnvelope, "description": "No job with that id."},
-                    503: {"description": "Job runner not started."}})
+@app.get("/jobs/{id_}/reviews", response_model=list[Review], tags=["jobs"],
+         summary="Reviews produced by a job",
+         responses=ERROR_RESPONSES["get_job_reviews"])
 def get_job_reviews(id_: str):
-    """The reviews whose `job_id` matches, sorted riskiest first (same ordering
-    as `/reviews`)."""
+    """Reviews whose `job_id` matches, sorted riskiest first."""
     if _runner is None:
-        raise HTTPException(503, "job runner not started")
+        raise NotFoundError(f"no job {id_}")
     job = _runner.get(id_)
     if job is None:
-        raise HTTPException(404, f"no job {id_}")
+        raise NotFoundError(f"no job {id_}")
     return sorted(_runner.reviews_for(id_), key=sort_key)
 
 
-@app.get("/reviews", response_model=list[Review], summary="List stored reviews, riskiest first")
+@app.get("/reviews", response_model=list[Review], tags=["reviews"],
+         summary="List stored reviews, riskiest first",
+         responses=ERROR_RESPONSES["list_reviews"])
 def list_reviews(
     needs_human_review: bool | None = Query(default=None),
     source: str | None = None,
     job_id: str | None = Query(default=None, description="Filter to reviews produced by one batch job."),
 ):
-    """Return persisted reviews, sorted by risk descending. Filter with
-    `?needs_human_review=true`, `?source=abcd|synthetic|upload`, or
-    `?job_id=...` (single value)."""
+    """Return persisted reviews, sorted by risk descending."""
     rs = _store.all()
     if needs_human_review is not None:
         rs = [r for r in rs if r.needs_human_review == needs_human_review]
@@ -272,18 +359,37 @@ def list_reviews(
     return sorted(rs, key=sort_key)
 
 
-@app.get("/reviews/{id_}", summary="Get one review with its transcript",
-         responses={404: {"model": NotFoundEnvelope, "description": "No review for that transcript id."}})
+@app.get("/reviews/{id_}", tags=["reviews"],
+         summary="Get one review with its transcript",
+         responses=ERROR_RESPONSES["get_review"])
 def get_review(id_: str):
-    """Return both the transcript and its review for a single conversation.
-    404 if the id has never been reviewed."""
+    """Return both the transcript and its review for a single conversation."""
     hit = _store.get(id_)
     if not hit:
-        raise HTTPException(404, f"no review for {id_}")
+        raise NotFoundError(f"no review for {id_}")
     t, r = hit
     return {"transcript": t, "review": r}
 
 
-@app.get("/", response_class=HTMLResponse, summary="Dashboard", include_in_schema=False)
+@app.get("/health", tags=["meta"], summary="Liveness check",
+         responses=ERROR_RESPONSES["health"])
+def health():
+    """Basic liveness — no provider call. Reports which judge is configured
+    and, for LLM, which model."""
+    judge_env = os.environ.get("CQR_JUDGE") or ("llm" if (
+        os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("CQR_LLM_BASE_URL")
+    ) else "heuristic")
+    return {
+        "status": "ok",
+        "judge": judge_env,
+        "model": os.environ.get("CQR_MODEL", "claude-sonnet-4-5") if judge_env == "llm" else None,
+        "runner_started": _runner is not None,
+    }
+
+
+@app.get("/", response_class=HTMLResponse, tags=["meta"],
+         summary="Dashboard", include_in_schema=False)
 def dashboard():
     return (Path(__file__).parent / "static" / "index.html").read_text()

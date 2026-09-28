@@ -229,16 +229,19 @@ class TestLazyJudgeInit:
 
 
 class TestRunnerNotStarted:
-    """Cover the guards that fire before/without lifespan starting the runner."""
+    """Cover the guards that fire before/without lifespan starting the runner.
+    The API stays inside its declared status matrix: batch submits 429
+    (queue unavailable), GET /jobs returns an empty list, GETs on specific
+    ids 404 as if they were LRU-evicted."""
 
-    def test_endpoints_return_503(self, monkeypatch):
+    def test_endpoints_stay_in_matrix(self, monkeypatch):
         monkeypatch.setattr(api, "_runner", None)
-        # Use TestClient WITHOUT `with`, so lifespan does not run.
-        c = TestClient(api.app)
-        assert c.post("/review/batch", json={"transcripts": [_transcript_body("x")]}).status_code == 503
-        assert c.get("/jobs").status_code == 503
-        assert c.get("/jobs/anything").status_code == 503
-        assert c.get("/jobs/anything/reviews").status_code == 503
+        c = TestClient(api.app)  # no `with`, no lifespan
+        assert c.post("/review/batch", json={"transcripts": [_transcript_body("x")]}).status_code == 429
+        assert c.get("/jobs").status_code == 200
+        assert c.get("/jobs").json() == []
+        assert c.get("/jobs/anything").status_code == 404
+        assert c.get("/jobs/anything/reviews").status_code == 404
 
 
 class TestHealth:
@@ -355,10 +358,9 @@ class TestOpenApiSpec:
         # 503 documents the Retry-After header.
         assert "Retry-After" in review_responses["503"].get("headers", {})
 
-    def test_error_envelope_and_not_found_in_schemas(self, client):
+    def test_error_body_in_schemas(self, client):
         spec = client.get("/openapi.json").json()
-        assert "ErrorEnvelope" in spec["components"]["schemas"]
-        assert "NotFoundEnvelope" in spec["components"]["schemas"]
+        assert "ErrorBody" in spec["components"]["schemas"]
 
     def test_404_documented_on_id_endpoints(self, client):
         spec = client.get("/openapi.json").json()

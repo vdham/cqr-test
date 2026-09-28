@@ -28,7 +28,7 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import Callable, Optional
 
-from .errors import JudgeError
+from .errors import JudgeError, QueueFull
 from .schema import Job, JobError, JobStatus, Review, Transcript
 from .store import Store
 
@@ -40,13 +40,15 @@ class JobRunner:
 
     def __init__(self, judge_factory: Callable, store: Store,
                  concurrency: int = 4, max_jobs_kept: int = 100,
-                 circuit_threshold: int = 5):
+                 circuit_threshold: int = 5, max_queue_size: int = 0):
         self._judge_factory = judge_factory
         self._store = store
         self._concurrency = max(1, concurrency)
         self._max_jobs_kept = max_jobs_kept
         self._circuit_threshold = circuit_threshold
-        self._queue: asyncio.Queue[tuple[str, Transcript]] = asyncio.Queue()
+        # asyncio.Queue(maxsize=0) is unbounded — sensible default for a real
+        # deployment. Tests set a small value to force QueueFull.
+        self._queue: asyncio.Queue[tuple[str, Transcript]] = asyncio.Queue(maxsize=max_queue_size)
         self._jobs: OrderedDict[str, Job] = OrderedDict()
         self._idempotency: dict[str, str] = {}
         self._consec_retryable: dict[str, int] = {}   # job_id -> current streak
@@ -75,6 +77,13 @@ class JobRunner:
             if existing is not None:
                 self._jobs.move_to_end(existing.id)
                 return existing
+
+        # Reserve capacity up front so we don't half-enqueue a batch.
+        if self._queue.maxsize and self._queue.qsize() + len(transcripts) > self._queue.maxsize:
+            raise QueueFull(
+                f"queue at capacity ({self._queue.qsize()}/{self._queue.maxsize}); "
+                f"cannot enqueue {len(transcripts)} more items"
+            )
 
         job_id = str(uuid.uuid4())
         job = Job(id=job_id, total=len(transcripts),

@@ -173,18 +173,70 @@ Callers should never compute the derived fields themselves — supplied values a
 
 ### Error contract
 
-Judge failures are classified into four typed subclasses of `JudgeError` (`cqr/errors.py`). The API's exception handler maps each to an HTTP response `{error_type, message, retryable, attempts}`; 5xx-retryable responses carry `Retry-After: 30`.
+The section below is **generated** from `cqr.api.ERROR_RESPONSES` by `scripts/render_error_table.py`. Do not hand-edit between the markers; regenerate with `python scripts/render_error_table.py`. A test (`test_render_matches_readme`) pins the pasted text byte-for-byte.
 
-| Class | HTTP | Scope | Retryable | Meaning |
+<!-- ERROR-TABLE-START -->
+### Status × error_type
+
+| Status | `error_type` | Retryable | Meaning | Client action |
 |---|---|---|---|---|
-| `JudgeUnavailable` | 503 | transcript | ✓ | Transient upstream failure (timeout, rate limit, connection drop, provider 5xx). Same input has a real chance of working later. |
-| `JudgeRejected` | 502 | **config** | ✗ | Bad key, wrong model, permission denied. Every remaining item in the same batch would fail identically → the JobRunner aborts the whole job; the CLI exits 3. |
-| `TranscriptRejected` | 422 | transcript | ✗ | Provider accepted the request but rejected this specific transcript (too long, content policy). One-item quarantine — other batch items proceed. |
-| `JudgeOutputInvalid` | 500 | transcript | ✗ | Provider replied, but the JSON didn't validate against `Review` even after output retries. |
+| **404** | `NotFound` | ✗ | No resource with that id (may have been LRU-evicted from the job table). | Check the id; if it's a job, it may have aged out of `CQR_MAX_JOBS_KEPT`. |
+| **413** | `PayloadTooLarge` | ✗ | Request body exceeded `CQR_MAX_BODY_BYTES`. | Split the batch or trim the transcript. |
+| **422** | `HTTPValidationError` | ✗ | Request body failed schema validation (FastAPI's native `{detail: [...]}` shape). | Fix the request body and resend. |
+| **422** | `TranscriptRejected` | ✗ | Provider accepted the request but rejected this transcript (too long, content policy). | Send the transcript to human review, or trim/redact and resubmit. |
+| **429** | `QueueFull` | ✓ | In-process job queue at capacity. | Back off `Retry-After` seconds and resubmit. |
+| **500** | `JudgeOutputInvalid` | ✗ | Provider replied, but JSON never validated after output retries. | Send the transcript to human review; the model can't self-correct. |
+| **502** | `JudgeRejected` | ✗ | Provider refused authoritatively — bad key, wrong model, permission denied. | Fix credentials/config and rerun; batch aborts, CLI exits 3. |
+| **503** | `JudgeUnavailable` | ✓ | Transient upstream failure — timeout, rate limit, connection drop. | Retry after `Retry-After` seconds; resubmit `errors[].transcript_id` where `retryable`. |
+
+### Body shape
+
+Every non-2xx serializes to `ErrorBody`, **except** FastAPI's own 422 for body validation, which keeps its native shape. Callers on 422 must branch on the JSON shape.
+
+```jsonc
+// ErrorBody — used by 404, 413, 422 (TranscriptRejected), 429, 500, 502, 503
+{
+  "error_type": "JudgeUnavailable",
+  "message": "RateLimitError: 429 from provider",
+  "retryable": true,
+  "attempts": 2,
+  "retry_after_s": 30
+}
+```
+
+```jsonc
+// FastAPI's native 422 (body validation) — different shape
+{
+  "detail": [
+    {"loc": ["body", "turns"], "msg": "list should have at least 1 item", "type": "too_short"}
+  ]
+}
+```
+
+### Job semantics
+
+- `status: completed` may still carry per-item `errors[]`. The batch as a whole is done; check each entry's `error_type` and `retryable` to decide what to resubmit.
+- `status: failed` means a **config-scope** error (JudgeRejected) aborted the job — every remaining item would fail identically. Fix the config, then resubmit the batch fresh.
+- `error_type: CircuitOpen` items are marked non-retryable in the error record itself, but the underlying failures were retryable — the circuit latched after `CQR_CIRCUIT_THRESHOLD` consecutive retryable failures. Resubmit them once the upstream is healthy.
+- To resubmit only what failed:
+
+  ```bash
+  # ids of retryable per-item failures from a completed job
+  curl -s http://127.0.0.1:8000/jobs/$JOB \
+    | jq -r '.errors[] | select(.retryable) | .transcript_id'
+  ```
+<!-- ERROR-TABLE-END -->
 
 `POST /review` is **idempotent by `id`**: reposting the same transcript id replaces both the stored transcript and its review.
 
-`POST /review/batch` is async (accept-then-poll) with an in-process bounded queue and per-job latched circuit breaker. Per-item failures land in `Job.errors` with the classified `error_type`, `retryable`, and `attempts` fields; the batch keeps running unless a `JudgeRejected` flips the whole job to `failed`.
+### CLI exit codes
+
+| Exit | Meaning |
+|---|---|
+| **0** | All transcripts scored successfully. |
+| **1** | One or more per-transcript failures (see stderr for details). |
+| **2** | An input file/directory was missing or unreadable. |
+| **3** | `JudgeRejected` — config-scope failure (bad key, wrong model). Run aborted, no retry. |
 
 ### What's stable
 

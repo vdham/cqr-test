@@ -1,4 +1,8 @@
-"""Shared fixtures for the CQR test suite."""
+"""Shared fixtures for the CQR test suite.
+
+Also installs a session-scoped drift-tracking middleware on `cqr.api.app`
+(see OBSERVED_RESPONSES below and `tests/test_error_contract.py`) so any
+undeclared status the app emits during the run gets flagged."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -113,6 +117,49 @@ def guidelines_dict():
             },
         },
     }
+
+
+# ------------------------------------------------- drift-tracking middleware ----
+
+OBSERVED_RESPONSES: set[tuple[str, str, int]] = set()  # (method, path_template, status)
+
+
+class _DriftMiddleware:
+    """Record (method, path_template, status) for every HTTP response the app
+    emits during the test session. Used by test_error_contract.py to assert
+    the app never emits a status absent from the OpenAPI spec."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        holder = {"status": None}
+
+        async def _send(message):
+            if message["type"] == "http.response.start":
+                holder["status"] = message["status"]
+            await send(message)
+
+        await self.app(scope, receive, _send)
+        route = scope.get("route")
+        if route is not None and holder["status"] is not None:
+            path_template = getattr(route, "path", scope.get("path", "?"))
+            OBSERVED_RESPONSES.add((scope["method"], path_template, holder["status"]))
+
+
+def _install_drift_middleware_once():
+    from cqr import api
+    # Only add if not already present (safe against repeat conftest imports).
+    for mw in api.app.user_middleware:
+        if mw.cls is _DriftMiddleware:
+            return
+    api.app.add_middleware(_DriftMiddleware)
+
+
+_install_drift_middleware_once()
 
 
 def valid_review_json(**overrides) -> str:

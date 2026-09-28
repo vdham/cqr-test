@@ -22,6 +22,7 @@
 - [x] README: accept-then-poll flow (curl example), error contract table, environment table, layout, test count
 - [x] TRADEOFFS: queue/concurrency paragraph; LiteLLM judge paragraph; corners cut (in-memory jobs, in-process workers, whole-body 422); hardening (broker + out-of-process workers, gateway policy)
 - [x] OpenAPI spec surfaces every JudgeError response (500/502/503 + `Retry-After` header) and 404s on `/{id}` endpoints; `ErrorEnvelope`/`NotFoundEnvelope` schemas added → `b522ce0`
+- [x] Hardened error contract: one `ErrorBody` shape for every non-2xx (except FastAPI's own 422); `QueueFull`/`NotFoundError`/`PayloadTooLarge` added; single `ERROR_RESPONSES` matrix in `api.py`; body-size middleware; render script + README section + drift-tracking test middleware → `<pending>`
 
 ## Acceptance
 - [x] `PROMPT.md` acceptance checklist 1–5 pass

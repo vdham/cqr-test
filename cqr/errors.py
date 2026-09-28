@@ -72,3 +72,31 @@ class JudgeOutputInvalid(JudgeError):
     retryable = False
     http_status = 500
     scope = "transcript"
+
+
+# --------------------------------------------------------- non-judge errors ----
+# These aren't judge failures — they come from the queue, routing, or the
+# request body — so they don't extend JudgeError. They share the ErrorBody
+# response shape via the api.py exception handlers.
+
+
+class QueueFull(Exception):
+    """The in-process job queue is at capacity; the caller should back off
+    and resubmit. Retryable; the API returns 429 with `Retry-After`."""
+    http_status = 429
+    retryable = True
+
+
+class NotFoundError(Exception):
+    """A referenced job or review id doesn't exist (may have been LRU-evicted
+    from the job table, or was never submitted). Not retryable."""
+    http_status = 404
+    retryable = False
+
+
+class PayloadTooLarge(Exception):
+    """Request body exceeded `CQR_MAX_BODY_BYTES`. Not retryable — the client
+    must split the batch or trim the transcript. Enforced by an ASGI
+    middleware before the body is parsed."""
+    http_status = 413
+    retryable = False
