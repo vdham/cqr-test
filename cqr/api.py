@@ -24,12 +24,42 @@ from pathlib import Path
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from pydantic import BaseModel, Field
+
 from .errors import JudgeError
 from .jobs import JobRunner, wait_for_job
 from .judge import get_judge
 from .schema import (BatchAccepted, BatchReviewRequest, Job, Review, Transcript,
                      sort_key)
 from .store import Store
+
+
+class ErrorEnvelope(BaseModel):
+    """Standard error body for classified judge failures. Shape mirrors
+    the JudgeError exception handler in this module."""
+    error_type: str = Field(description="Class name of the JudgeError subclass that fired.")
+    message: str
+    retryable: bool = Field(description="If true, an identical resubmit could succeed; the response also carries `Retry-After`.")
+    attempts: int = Field(description="Number of provider calls the judge made before giving up on this item.")
+
+
+class NotFoundEnvelope(BaseModel):
+    detail: str
+
+
+_JUDGE_ERROR_RESPONSES = {
+    500: {"model": ErrorEnvelope,
+          "description": "JudgeOutputInvalid — provider replied, but JSON never validated against the Review schema even after output retries."},
+    502: {"model": ErrorEnvelope,
+          "description": "JudgeRejected — provider refused authoritatively (bad key, wrong model, permission denied). Terminal, config-scope."},
+    503: {"model": ErrorEnvelope,
+          "description": "JudgeUnavailable — transient upstream failure (timeout, rate limit, connection drop). Response carries `Retry-After: 30`.",
+          "headers": {"Retry-After": {"schema": {"type": "integer"}, "description": "Seconds to wait before retrying."}}},
+}
+_TRANSCRIPT_ERROR_RESPONSE = {
+    422: {"model": ErrorEnvelope,
+          "description": "TranscriptRejected — provider rejected this specific transcript (too long, content policy). Terminal for this item; other items in a batch may still succeed."},
+}
 
 _store = Store(Path(os.environ.get("CQR_STORE", "out/reviews.json")))
 _judge = None
@@ -137,7 +167,8 @@ _TRANSCRIPT_EXAMPLES = {
 }
 
 
-@app.post("/review", response_model=Review, summary="Review a single conversation")
+@app.post("/review", response_model=Review, summary="Review a single conversation",
+          responses={**_JUDGE_ERROR_RESPONSES, **_TRANSCRIPT_ERROR_RESPONSE})
 def review_one(t: Transcript = Body(openapi_examples=_TRANSCRIPT_EXAMPLES)):
     """Judge one transcript against the rubric. Returns a `Review` with per-signal
     levels, rationales, and turn citations. Blocks until the judge returns
@@ -154,6 +185,7 @@ def review_one(t: Transcript = Body(openapi_examples=_TRANSCRIPT_EXAMPLES)):
     responses={
         200: {"model": Job, "description": "Returned when ?wait=true and the job reached a terminal state within CQR_BATCH_WAIT_S."},
         202: {"model": BatchAccepted, "description": "Job accepted and enqueued. Poll GET /jobs/{id}."},
+        503: {"description": "Job runner not started (called before app lifespan)."},
     },
     summary="Enqueue a batch of transcripts for async review",
 )
@@ -185,7 +217,8 @@ async def review_batch(
     return Response(content=accepted.model_dump_json(), status_code=202, media_type="application/json")
 
 
-@app.get("/jobs", response_model=list[Job], summary="List all jobs")
+@app.get("/jobs", response_model=list[Job], summary="List all jobs",
+         responses={503: {"description": "Job runner not started."}})
 def list_jobs():
     """Every job the runner still remembers (LRU-capped by `CQR_MAX_JOBS_KEPT`).
     Most recently created last."""
@@ -194,7 +227,9 @@ def list_jobs():
     return _runner.list_jobs()
 
 
-@app.get("/jobs/{id_}", response_model=Job, summary="Get one job")
+@app.get("/jobs/{id_}", response_model=Job, summary="Get one job",
+         responses={404: {"model": NotFoundEnvelope, "description": "No job with that id (may have been LRU-evicted)."},
+                    503: {"description": "Job runner not started."}})
 def get_job(id_: str):
     if _runner is None:
         raise HTTPException(503, "job runner not started")
@@ -204,7 +239,9 @@ def get_job(id_: str):
     return job
 
 
-@app.get("/jobs/{id_}/reviews", response_model=list[Review], summary="Reviews produced by a job")
+@app.get("/jobs/{id_}/reviews", response_model=list[Review], summary="Reviews produced by a job",
+         responses={404: {"model": NotFoundEnvelope, "description": "No job with that id."},
+                    503: {"description": "Job runner not started."}})
 def get_job_reviews(id_: str):
     """The reviews whose `job_id` matches, sorted riskiest first (same ordering
     as `/reviews`)."""
@@ -235,7 +272,8 @@ def list_reviews(
     return sorted(rs, key=sort_key)
 
 
-@app.get("/reviews/{id_}", summary="Get one review with its transcript")
+@app.get("/reviews/{id_}", summary="Get one review with its transcript",
+         responses={404: {"model": NotFoundEnvelope, "description": "No review for that transcript id."}})
 def get_review(id_: str):
     """Return both the transcript and its review for a single conversation.
     404 if the id has never been reviewed."""

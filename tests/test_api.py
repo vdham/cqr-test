@@ -343,3 +343,24 @@ class TestOpenApiSpec:
     def test_dashboard_hidden_from_schema(self, client):
         spec = client.get("/openapi.json").json()
         assert "/" not in spec["paths"]
+
+    def test_judge_error_responses_documented(self, client):
+        """The exception handler produces 502/503/500 for JudgeError. Those
+        must appear in the OpenAPI spec so integrators know what to expect."""
+        spec = client.get("/openapi.json").json()
+        review_responses = spec["paths"]["/review"]["post"]["responses"]
+        assert "502" in review_responses  # JudgeRejected
+        assert "503" in review_responses  # JudgeUnavailable
+        assert "500" in review_responses  # JudgeOutputInvalid
+        # 503 documents the Retry-After header.
+        assert "Retry-After" in review_responses["503"].get("headers", {})
+
+    def test_error_envelope_and_not_found_in_schemas(self, client):
+        spec = client.get("/openapi.json").json()
+        assert "ErrorEnvelope" in spec["components"]["schemas"]
+        assert "NotFoundEnvelope" in spec["components"]["schemas"]
+
+    def test_404_documented_on_id_endpoints(self, client):
+        spec = client.get("/openapi.json").json()
+        for path in ("/reviews/{id_}", "/jobs/{id_}", "/jobs/{id_}/reviews"):
+            assert "404" in spec["paths"][path]["get"]["responses"], path
