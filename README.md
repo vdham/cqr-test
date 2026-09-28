@@ -18,6 +18,7 @@ Every signal returns `{level, rationale, turns}`. `needs_human_review` is derive
 ## Setup
 
 ```bash
+git clone https://github.com/vdham/cqr-asapp && cd cqr-asapp
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 export ANTHROPIC_API_KEY=...        # omit to use the offline regex baseline judge
@@ -41,7 +42,7 @@ python -m cqr.cli show
 python scripts/eval_synthetic.py
 
 # API + dashboard
-uvicorn cqr.api:app --reload      # open http://127.0.0.1:8000/
+uvicorn cqr.api:app --reload      # dashboard http://127.0.0.1:8000/  ·  Swagger UI http://127.0.0.1:8000/docs (prefilled example bodies)
 ```
 
 ## Contract
