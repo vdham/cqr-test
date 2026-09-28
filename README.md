@@ -123,4 +123,5 @@ cqr/cli.py         batch runner
 cqr/api.py         FastAPI endpoints + dashboard
 cqr/static/        one-file dashboard
 scripts/           synthetic data generator, synthetic eval
+tests/             pytest suite — hermetic, 100% line coverage across cqr/*
 ```
