@@ -4,7 +4,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cqr.schema import (Correctness, Level3, Resolution, Review, RiskFlag, RiskFlagType,
+from cqr.schema import (Correctness, CorrectnessResult, Level3, Level3Result,
+                        Resolution, ResolutionResult, Review, RiskFlag, RiskFlagType,
                         SentimentPoint, SignalResult, Transcript, Turn)
 
 
@@ -31,6 +32,46 @@ class TestTranscript:
         assert sample_transcript.intent is None
         assert sample_transcript.reference is None
         assert sample_transcript.metadata == {}
+
+    def test_empty_turns_rejected(self):
+        with pytest.raises(ValidationError):
+            Transcript(id="x", source="upload", turns=[])
+
+    def test_duplicate_idx_rejected(self):
+        with pytest.raises(ValidationError, match="unique"):
+            Transcript(id="x", source="upload", turns=[
+                Turn(idx=0, speaker="agent", text="hi"),
+                Turn(idx=0, speaker="customer", text="?"),
+            ])
+
+    def test_non_contiguous_idx_rejected(self):
+        with pytest.raises(ValidationError, match="contiguous"):
+            Transcript(id="x", source="upload", turns=[
+                Turn(idx=0, speaker="agent", text="hi"),
+                Turn(idx=2, speaker="customer", text="?"),
+            ])
+
+    def test_out_of_order_idx_rejected(self):
+        with pytest.raises(ValidationError, match="contiguous"):
+            Transcript(id="x", source="upload", turns=[
+                Turn(idx=1, speaker="agent", text="hi"),
+                Turn(idx=0, speaker="customer", text="?"),
+            ])
+
+    def test_all_idx_absent_auto_assigns(self):
+        t = Transcript(id="x", source="upload", turns=[
+            Turn(speaker="agent", text="hi"),
+            Turn(speaker="customer", text="?"),
+            Turn(speaker="agent", text="ok"),
+        ])
+        assert [x.idx for x in t.turns] == [0, 1, 2]
+
+    def test_partial_idx_rejected(self):
+        with pytest.raises(ValidationError, match="every turn or none"):
+            Transcript(id="x", source="upload", turns=[
+                Turn(idx=0, speaker="agent", text="hi"),
+                Turn(speaker="customer", text="?"),
+            ])
 
 
 # --------------------------------------------------------------- Review invariants ----
@@ -143,19 +184,39 @@ class TestReviewNeedsHumanReview:
 
     def test_true_when_correctness_contradicted(self, minimal_review_kwargs):
         kw = dict(minimal_review_kwargs)
-        kw["correctness"] = SignalResult(level=Correctness.contradicted.value, rationale="r", turns=[])
+        kw["correctness"] = CorrectnessResult(level=Correctness.contradicted, rationale="r", turns=[])
         r = Review(**kw)
         assert r.needs_human_review is True
 
     def test_false_when_no_flags_and_correctness_supported(self, minimal_review_kwargs):
         kw = dict(minimal_review_kwargs)
-        kw["correctness"] = SignalResult(level=Correctness.supported.value, rationale="r", turns=[])
+        kw["correctness"] = CorrectnessResult(level=Correctness.supported, rationale="r", turns=[])
         r = Review(**kw)
         assert r.needs_human_review is False
 
     def test_supplied_needs_review_is_overwritten(self, minimal_review_kwargs):
         r = Review(**minimal_review_kwargs, needs_human_review=True)
         assert r.needs_human_review is False
+
+
+class TestSortKey:
+    def _build(self, base, tid, **overrides):
+        kw = {**base, **overrides, "transcript_id": tid}
+        return Review(**kw)
+
+    def test_orders_by_max_risk_then_correctness_then_resolution(self, minimal_review_kwargs):
+        from cqr.schema import sort_key
+        base = dict(minimal_review_kwargs)
+        high_risk = self._build(base, "A", risk_flags=[
+            RiskFlag(type=RiskFlagType.pii_mishandling, severity=Level3.high, rationale="r", turns=[]),
+        ])
+        contradicted = self._build(base, "B",
+            correctness=CorrectnessResult(level=Correctness.contradicted, rationale="r", turns=[]))
+        unresolved = self._build(base, "C",
+            resolution=ResolutionResult(level=Resolution.unresolved, rationale="r", turns=[]))
+        clean = self._build(base, "D")
+        ordered = sorted([clean, unresolved, contradicted, high_risk], key=sort_key)
+        assert [r.transcript_id for r in ordered] == ["A", "B", "C", "D"]
 
 
 class TestReviewMaxRisk:
@@ -168,6 +229,51 @@ class TestReviewMaxRisk:
             RiskFlag(type=RiskFlagType.pii_mishandling, severity=Level3.high, rationale="r", turns=[]),
         ])
         assert r.max_risk == 3
+
+
+class TestReviewLevelTyping:
+    """Section A1: SignalResult subclasses reject wrong-enum-family values."""
+
+    def test_resolution_rejects_non_resolution_enum(self, minimal_review_kwargs):
+        kw = dict(minimal_review_kwargs)
+        kw["resolution"] = {"level": "supported", "rationale": "r", "turns": []}
+        with pytest.raises(ValidationError):
+            Review(**kw)
+
+    def test_level3_rejects_out_of_family_value(self, minimal_review_kwargs):
+        kw = dict(minimal_review_kwargs)
+        kw["customer_effort"] = {"level": "very high", "rationale": "r", "turns": []}
+        with pytest.raises(ValidationError):
+            Review(**kw)
+
+    def test_correctness_rejects_bogus_level(self, minimal_review_kwargs):
+        kw = dict(minimal_review_kwargs)
+        kw["correctness"] = {"level": "ok", "rationale": "r", "turns": []}
+        with pytest.raises(ValidationError):
+            Review(**kw)
+
+
+class TestReviewRubricVersion:
+    def test_field_required(self, minimal_review_kwargs):
+        kw = dict(minimal_review_kwargs)
+        kw.pop("rubric_version")
+        with pytest.raises(ValidationError):
+            Review(**kw)
+
+    def test_value_preserved(self, minimal_review_kwargs):
+        kw = dict(minimal_review_kwargs)
+        kw["rubric_version"] = "9.9"
+        assert Review(**kw).rubric_version == "9.9"
+
+
+class TestReviewWarnings:
+    def test_default_empty(self, minimal_review_kwargs):
+        r = Review(**minimal_review_kwargs)
+        assert r.warnings == []
+
+    def test_preserved_when_supplied(self, minimal_review_kwargs):
+        r = Review(**minimal_review_kwargs, warnings=["a", "b"])
+        assert r.warnings == ["a", "b"]
 
 
 class TestReviewSerialization:

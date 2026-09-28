@@ -53,6 +53,7 @@ class TestFinalize:
         assert r.source == sample_transcript.source
         assert r.intent == sample_transcript.intent
         assert r.judge == "anthropic:test-model"
+        assert r.rubric_version == "1.0"
 
     def test_no_reference_forces_unverifiable(self, sample_transcript):
         assert sample_transcript.reference is None
@@ -68,6 +69,116 @@ class TestFinalize:
     def test_unverifiable_from_llm_when_no_reference_kept_as_is(self, sample_transcript):
         r = _finalize(sample_transcript, self._raw("unverifiable"), "test")
         assert r.correctness.level == "unverifiable"
+
+
+class TestFinalizeLevelNormalization:
+    """Section A1: healable typography ('Resolved.', 'CONTRADICTED') normalizes
+    without triggering the retry loop; genuinely invalid levels ('very high',
+    'ok') raise ValidationError so the retry actually fires."""
+
+    def _raw_with(self, **level_overrides):
+        base = {
+            "resolution": {"level": "resolved", "rationale": "r", "turns": []},
+            "correctness": {"level": "supported", "rationale": "r", "turns": []},
+            "customer_effort": {"level": "low", "rationale": "r", "turns": []},
+            "interaction_quality": {"level": "medium", "rationale": "r", "turns": []},
+            "sentiment_trajectory": [], "summary": "s",
+        }
+        for k, v in level_overrides.items():
+            base[k]["level"] = v
+        return base
+
+    def test_trailing_period_healed(self, transcript_with_reference):
+        r = _finalize(transcript_with_reference,
+                      self._raw_with(resolution="Resolved."), "t")
+        assert r.resolution.level == "resolved"
+
+    def test_uppercase_healed(self, transcript_with_reference):
+        r = _finalize(transcript_with_reference,
+                      self._raw_with(correctness="CONTRADICTED"), "t")
+        assert r.correctness.level == "contradicted"
+        assert r.needs_human_review is True  # derived from the healed level
+
+    def test_whitespace_healed(self, transcript_with_reference):
+        r = _finalize(transcript_with_reference,
+                      self._raw_with(customer_effort="  high  "), "t")
+        assert r.customer_effort.level == "high"
+
+    def test_invalid_level_raises(self, transcript_with_reference):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            _finalize(transcript_with_reference,
+                      self._raw_with(customer_effort="very high"), "t")
+
+    def test_bogus_level_raises(self, transcript_with_reference):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            _finalize(transcript_with_reference,
+                      self._raw_with(interaction_quality="ok"), "t")
+
+    def test_risk_flag_severity_also_normalized(self, transcript_with_reference):
+        raw = self._raw_with()
+        raw["risk_flags"] = [{"type": "churn_signal", "severity": "HIGH", "rationale": "r", "turns": []}]
+        r = _finalize(transcript_with_reference, raw, "t")
+        assert r.risk_flags[0].severity.value == "high"
+
+
+class TestFinalizeCitationValidation:
+    """Section A2: turn citations outside the transcript are silently stripped
+    with a warning; sentiment points for non-customer turns are stripped too."""
+
+    def _raw(self):
+        return {
+            "resolution": {"level": "resolved", "rationale": "r", "turns": []},
+            "correctness": {"level": "supported", "rationale": "r", "turns": []},
+            "customer_effort": {"level": "low", "rationale": "r", "turns": []},
+            "interaction_quality": {"level": "medium", "rationale": "r", "turns": []},
+            "sentiment_trajectory": [], "summary": "s",
+        }
+
+    def test_out_of_range_signal_turn_dropped_with_warning(self, transcript_with_reference):
+        # sample_transcript has 4 turns (idx 0..3); 99 is out of range.
+        raw = self._raw()
+        raw["resolution"]["turns"] = [0, 99, 3]
+        r = _finalize(transcript_with_reference, raw, "t")
+        assert 99 not in r.resolution.turns
+        assert set(r.resolution.turns) == {0, 3}
+        assert any("resolution" in w and "99" in w for w in r.warnings)
+
+    def test_risk_flag_turn_out_of_range_dropped(self, transcript_with_reference):
+        raw = self._raw()
+        raw["risk_flags"] = [{"type": "churn_signal", "severity": "high",
+                              "rationale": "r", "turns": [1, 42]}]
+        r = _finalize(transcript_with_reference, raw, "t")
+        assert r.risk_flags[0].turns == [1]
+        assert any("risk_flags" in w and "42" in w for w in r.warnings)
+
+    def test_agent_turn_stripped_from_sentiment(self, transcript_with_reference):
+        # sample_transcript idx 0 and 2 are AGENT; 1 and 3 are CUSTOMER.
+        raw = self._raw()
+        raw["sentiment_trajectory"] = [
+            {"turn": 0, "score": 0.1},   # agent -> drop
+            {"turn": 1, "score": -0.3},  # customer -> keep
+            {"turn": 3, "score": 0.5},   # customer -> keep
+        ]
+        r = _finalize(transcript_with_reference, raw, "t")
+        assert [p.turn for p in r.sentiment_trajectory] == [1, 3]
+        assert r.sentiment_delta == round(0.5 - (-0.3), 2)  # recomputed from survivors
+        assert any("sentiment_trajectory" in w and "0" in w for w in r.warnings)
+
+    def test_unknown_sentiment_turn_dropped(self, transcript_with_reference):
+        raw = self._raw()
+        raw["sentiment_trajectory"] = [{"turn": 99, "score": 0.5}]
+        r = _finalize(transcript_with_reference, raw, "t")
+        assert r.sentiment_trajectory == []
+        assert any("sentiment_trajectory" in w for w in r.warnings)
+
+    def test_clean_citations_produce_no_warnings(self, transcript_with_reference):
+        raw = self._raw()
+        raw["resolution"]["turns"] = [3]
+        raw["sentiment_trajectory"] = [{"turn": 1, "score": 0.0}, {"turn": 3, "score": 0.5}]
+        r = _finalize(transcript_with_reference, raw, "t")
+        assert r.warnings == []
 
 
 # --------------------------------------------------------- HeuristicJudge ----

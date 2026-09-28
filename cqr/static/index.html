@@ -128,8 +128,8 @@ async function open(id) {
 
   $('#detail').innerHTML = `
     <h2 style="margin:0">${r.needs_human_review?'⚠ ':''}${t.id}</h2>
-    <div class="meta" style="color:var(--muted)">source ${t.source} · intent ${t.intent||'—'} · judge <code>${r.judge}</code> · sentiment Δ ${r.sentiment_delta>0?'+':''}${r.sentiment_delta}</div>
-    <p style="margin:8px 0 0">${r.summary}</p>
+    <div class="meta" style="color:var(--muted)">source ${esc(t.source)} · intent ${esc(t.intent||'—')} · judge <code>${esc(r.judge)}</code> · rubric <code>${esc(r.rubric_version||'?')}</code> · sentiment Δ ${r.sentiment_delta>0?'+':''}${r.sentiment_delta}</div>
+    <p style="margin:8px 0 0">${esc(r.summary||'')}</p>
 
     <div class="tier">Tier 1 · must know</div>
     <div class="cards">${flags}${card('Resolution', r.resolution, 'resolution')}${card('Correctness', r.correctness, 'correctness')}</div>

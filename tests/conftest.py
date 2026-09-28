@@ -6,7 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cqr.schema import (Correctness, Level3, Resolution, RiskFlag, RiskFlagType,
+from cqr.schema import (Correctness, CorrectnessResult, Level3, Level3Result,
+                        Resolution, ResolutionResult, RiskFlag, RiskFlagType,
                         SignalResult, Transcript, Turn)
 from cqr.store import Store
 
@@ -39,22 +40,24 @@ def transcript_with_reference(sample_transcript):
 
 @pytest.fixture
 def signal_result_kwargs():
-    """Level values that satisfy the SignalResult level: str schema."""
+    """Typed level results that satisfy the Review contract."""
     return {
-        "resolution": SignalResult(level=Resolution.resolved.value, rationale="r", turns=[]),
-        "correctness": SignalResult(level=Correctness.unverifiable.value, rationale="c", turns=[]),
-        "customer_effort": SignalResult(level=Level3.low.value, rationale="e", turns=[]),
-        "interaction_quality": SignalResult(level=Level3.medium.value, rationale="iq", turns=[]),
+        "resolution": ResolutionResult(level=Resolution.resolved, rationale="r", turns=[]),
+        "correctness": CorrectnessResult(level=Correctness.unverifiable, rationale="c", turns=[]),
+        "customer_effort": Level3Result(level=Level3.low, rationale="e", turns=[]),
+        "interaction_quality": Level3Result(level=Level3.medium, rationale="iq", turns=[]),
     }
 
 
 @pytest.fixture
 def minimal_review_kwargs(signal_result_kwargs):
     """Minimum required kwargs to construct a valid Review."""
+    from cqr.rubric import RUBRIC_VERSION
     return {
         "transcript_id": "t1",
         "source": "test",
         "judge": "test",
+        "rubric_version": RUBRIC_VERSION,
         **signal_result_kwargs,
     }
 
@@ -128,11 +131,12 @@ def mock_anthropic_client(responses: list[str]):
 
 
 def valid_review_json(**overrides) -> str:
-    """A JSON string a real LLM might return — valid Review payload."""
+    """A JSON string a real LLM might return — valid Review payload keyed to
+    `sample_transcript` (4 turns, customer turns at idx 1 and 3)."""
     import json
     payload = {
         "risk_flags": [],
-        "resolution": {"level": "resolved", "rationale": "done", "turns": [4]},
+        "resolution": {"level": "resolved", "rationale": "done", "turns": [3]},
         "correctness": {"level": "supported", "rationale": "ok", "turns": []},
         "customer_effort": {"level": "low", "rationale": "one loop", "turns": []},
         "interaction_quality": {"level": "medium", "rationale": "polite", "turns": []},

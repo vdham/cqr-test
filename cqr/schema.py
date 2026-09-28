@@ -15,7 +15,10 @@ from pydantic import BaseModel, Field, model_validator
 # ---------------------------------------------------------------- input ----
 
 class Turn(BaseModel):
-    idx: int = Field(description="0-based position in the conversation")
+    idx: Optional[int] = Field(
+        default=None,
+        description="0-based position in the conversation. If omitted on every turn, the Transcript validator assigns 0..N-1 from list order.",
+    )
     speaker: Literal["customer", "agent", "system"]
     text: str
 
@@ -23,7 +26,7 @@ class Turn(BaseModel):
 class Transcript(BaseModel):
     id: str
     source: str = Field(description="abcd | synthetic | upload")
-    turns: list[Turn]
+    turns: list[Turn] = Field(min_length=1)
     intent: Optional[str] = Field(
         default=None,
         description="Known issue type, if the source provides it (e.g. ABCD subflow). Used to select reference guidelines.",
@@ -33,6 +36,25 @@ class Transcript(BaseModel):
         description="Policy / guideline text the agent should have followed. Enables the correctness signal. None => correctness is unverifiable.",
     )
     metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _normalize_turn_indices(self):
+        """If any turn has an explicit idx, all must; then idx must be unique and
+        contiguous 0..N-1 in list order (the evidence-citation contract keys on
+        the list position). If every idx is absent, assign 0..N-1 from list order."""
+        missing = [i for i, t in enumerate(self.turns) if t.idx is None]
+        if missing and len(missing) != len(self.turns):
+            raise ValueError("turn idx must be present on every turn or none")
+        if missing:
+            for i, t in enumerate(self.turns):
+                t.idx = i
+            return self
+        ids = [t.idx for t in self.turns]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"turn idx values must be unique; got {ids}")
+        if ids != list(range(len(ids))):
+            raise ValueError(f"turn idx values must be contiguous 0..N-1 in list order; got {ids}")
+        return self
 
     def render(self) -> str:
         return "\n".join(f"[{t.idx}] {t.speaker.upper()}: {t.text}" for t in self.turns)
@@ -78,10 +100,24 @@ class RiskFlag(BaseModel):
 
 
 class SignalResult(BaseModel):
-    """One scored dimension: a level, why, and where in the transcript to look."""
+    """One scored dimension: a level, why, and where in the transcript to look.
+
+    Subclasses narrow `level` to the specific enum that signal accepts."""
     level: str
     rationale: str = Field(description="One or two sentences. Cite specific behavior, not vibes.")
     turns: list[int] = Field(default_factory=list, description="Turn indices that are the evidence")
+
+
+class ResolutionResult(SignalResult):
+    level: Resolution
+
+
+class CorrectnessResult(SignalResult):
+    level: Correctness
+
+
+class Level3Result(SignalResult):
+    level: Level3
 
 
 class SentimentPoint(BaseModel):
@@ -126,21 +162,25 @@ class Review(BaseModel):
 
     # Tier 1: must know
     risk_flags: list[RiskFlag] = Field(default_factory=list)
-    resolution: SignalResult
-    correctness: SignalResult
+    resolution: ResolutionResult
+    correctness: CorrectnessResult
 
     # Tier 2: explain the experience
-    customer_effort: SignalResult           # level: low | medium | high   (high effort = bad)
-    interaction_quality: SignalResult       # level: low | medium | high  (high = good)
+    customer_effort: Level3Result           # level: low | medium | high   (high effort = bad)
+    interaction_quality: Level3Result       # level: low | medium | high  (high = good)
 
     # Context (not a quality dimension)
     sentiment_trajectory: list[SentimentPoint] = Field(default_factory=list)
-    sentiment_delta: float = Field(default=0.0, description="end minus start; positive = agent moved the customer up")
+    sentiment_delta: float = Field(default=0.0, description="end minus start; positive = agent moved the customer up. Always present — set by the Review validator.")
 
     # Provenance
     judge: str = Field(description="which judge produced this: anthropic:<model> | heuristic")
-    needs_human_review: bool = Field(default=False, description="True when any risk flag is medium+ or correctness is contradicted")
+    rubric_version: str = Field(description="Version of the rubric this review was scored against. Stamped by the judge.")
+    needs_human_review: bool = Field(default=False, description="True when any risk flag is medium+ or correctness is contradicted. Always present — set by the Review validator.")
     summary: str = Field(default="", description="One line a supervisor can read in a list view")
+
+    # Diagnostics (server-populated when the judge cites turns it should not have)
+    warnings: list[str] = Field(default_factory=list, description="Non-fatal notes produced during finalize (e.g. dropped invalid turn citations).")
 
     @model_validator(mode="after")
     def _enforce_invariants(self):
@@ -160,8 +200,8 @@ class Review(BaseModel):
             if len(self.sentiment_trajectory) >= 2 else 0.0
         )
         self.needs_human_review = (
-            any(f.severity.value in ("medium", "high") for f in self.risk_flags)
-            or self.correctness.level == Correctness.contradicted.value
+            any(f.severity in (Level3.medium, Level3.high) for f in self.risk_flags)
+            or self.correctness.level == Correctness.contradicted
         )
         return self
 
@@ -169,6 +209,16 @@ class Review(BaseModel):
     def max_risk(self) -> int:
         order = {"low": 1, "medium": 2, "high": 3}
         return max((order[f.severity.value] for f in self.risk_flags), default=0)
+
+
+def sort_key(r: Review):
+    """Canonical review ordering: riskiest first, then contradicted-correctness,
+    then unresolved, then id for stability. Used by both the API and the CLI so
+    lists match across surfaces."""
+    return (-r.max_risk,
+            r.correctness.level != Correctness.contradicted,
+            r.resolution.level != Resolution.unresolved,
+            r.transcript_id)
 
 
 class BatchReviewRequest(BaseModel):

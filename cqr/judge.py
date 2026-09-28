@@ -10,6 +10,7 @@ Both return the same Review contract, so the API/UI don't care which ran.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -17,9 +18,20 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from .rubric import SYSTEM, build_user_prompt
+from .rubric import RUBRIC_VERSION, SYSTEM, build_user_prompt
 from .schema import (Correctness, Level3, Resolution, Review, RiskFlag, RiskFlagType,
                      SentimentPoint, SignalResult, Transcript)
+
+
+_SIGNAL_KEYS = ("resolution", "correctness", "customer_effort", "interaction_quality")
+
+
+def _normalize_level(s: str) -> str:
+    """Heal the shallow typography variants the LLM occasionally emits
+    ('Resolved.', 'CONTRADICTED', ' resolved ') so the retry loop only fires
+    on actually-invalid levels ('very high', 'ok', 'kinda'). We strip
+    surrounding whitespace, drop trailing punctuation, and lowercase."""
+    return s.strip().rstrip(".!?,;:").strip().lower()
 
 
 class Judge(Protocol):
@@ -30,20 +42,75 @@ class Judge(Protocol):
 # --------------------------------------------------------------- helpers ----
 
 def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
-    """Stamp provenance, override correctness when there is no reference, and hand
-    off to Pydantic. All other derivations (risk_flag dedupe, sentiment_delta,
-    needs_human_review, trajectory sort) are enforced by the Review model itself."""
-    raw = dict(raw)
+    """Stamp provenance and turn the LLM's dict into a Review. Three things
+    happen here that are strictly out of scope for the schema itself, because
+    they depend on the Transcript (which the Review model has no handle on):
+
+    - Normalize level strings ("Resolved." -> "resolved"). Truly invalid levels
+      like "very high" fall through and raise ValidationError, which is how the
+      Anthropic judge's retry loop gets triggered.
+    - Force correctness to `unverifiable` when there is no reference.
+    - Strip turn citations that don't correspond to a real turn, and
+      sentiment points that don't correspond to a CUSTOMER turn. Anything
+      dropped is recorded in Review.warnings.
+
+    All other derivations (risk_flag dedupe, sentiment_delta,
+    needs_human_review, trajectory sort) live on Review itself."""
+    raw = copy.deepcopy(raw)  # we mutate nested dicts (turns lists) below
     raw["transcript_id"] = t.id
     raw["source"] = t.source
     raw["intent"] = t.intent
     raw["judge"] = judge_name
+    raw["rubric_version"] = RUBRIC_VERSION
+
+    for key in _SIGNAL_KEYS:
+        sig = raw.get(key)
+        if isinstance(sig, dict) and isinstance(sig.get("level"), str):
+            sig["level"] = _normalize_level(sig["level"])
+    for f in raw.get("risk_flags", []) or []:
+        if isinstance(f, dict) and isinstance(f.get("severity"), str):
+            f["severity"] = _normalize_level(f["severity"])
+
     if not t.reference and raw.get("correctness", {}).get("level") != Correctness.unverifiable.value:
         raw["correctness"] = {
             "level": Correctness.unverifiable.value,
             "rationale": "No reference policy provided for this conversation; claims cannot be checked.",
             "turns": [],
         }
+
+    valid_idx = {turn.idx for turn in t.turns}
+    customer_idx = {turn.idx for turn in t.turns if turn.speaker == "customer"}
+    warnings: list[str] = list(raw.get("warnings") or [])
+
+    for key in _SIGNAL_KEYS:
+        sig = raw.get(key)
+        if isinstance(sig, dict):
+            turns = list(sig.get("turns") or [])
+            bad = [x for x in turns if x not in valid_idx]
+            if bad:
+                warnings.append(f"{key}: dropped unknown turn(s) {bad}")
+                sig["turns"] = [x for x in turns if x in valid_idx]
+
+    for i, f in enumerate(raw.get("risk_flags", []) or []):
+        if isinstance(f, dict):
+            turns = list(f.get("turns") or [])
+            bad = [x for x in turns if x not in valid_idx]
+            if bad:
+                label = f.get("type", "?")
+                warnings.append(f"risk_flags[{i}] ({label}): dropped unknown turn(s) {bad}")
+                f["turns"] = [x for x in turns if x in valid_idx]
+
+    filtered_traj: list[dict] = []
+    for p in raw.get("sentiment_trajectory", []) or []:
+        if isinstance(p, dict):
+            turn = p.get("turn")
+            if turn in customer_idx:
+                filtered_traj.append(p)
+            else:
+                warnings.append(f"sentiment_trajectory: dropped non-customer turn {turn}")
+    raw["sentiment_trajectory"] = filtered_traj
+
+    raw["warnings"] = warnings
     return Review.model_validate(raw)
 
 

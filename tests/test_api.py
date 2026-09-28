@@ -53,6 +53,27 @@ class TestPostReview:
         resp = client.post("/review", json={"id": "x"})  # missing required fields
         assert resp.status_code == 422
 
+    def test_empty_turns_returns_422(self, client):
+        resp = client.post("/review", json={"id": "x", "source": "upload", "turns": []})
+        assert resp.status_code == 422
+
+    def test_duplicate_idx_returns_422(self, client):
+        resp = client.post("/review", json={
+            "id": "x", "source": "upload",
+            "turns": [
+                {"idx": 0, "speaker": "agent", "text": "hi"},
+                {"idx": 0, "speaker": "customer", "text": "?"},
+            ],
+        })
+        assert resp.status_code == 422
+
+    def test_contiguous_idx_accepted(self, client):
+        resp = client.post("/review", json=_transcript_body("contig", turns=[
+            {"idx": 0, "speaker": "agent", "text": "hi"},
+            {"idx": 1, "speaker": "customer", "text": "help"},
+        ]))
+        assert resp.status_code == 200
+
 
 class TestPostReviewBatch:
     def test_returns_reviews_and_empty_errors_on_all_ok(self, client):
