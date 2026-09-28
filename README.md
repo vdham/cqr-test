@@ -13,7 +13,7 @@ Signals (see `TRADEOFFS.md` for why):
 | 2 | **interaction_quality** | `low` · `medium` · `high` |
 | context | sentiment_trajectory | per customer turn, −1…+1, plus `sentiment_delta` |
 
-Every signal returns `{level, rationale, turns}`. `needs_human_review` is derived in code: any medium+ risk flag, or contradicted correctness.
+Every signal returns `{level, rationale, turns}`. Derived fields (`needs_human_review`, `sentiment_delta`, risk-flag deduping, trajectory sort) are enforced by the `Review` schema at construction — see [Invariants](#invariants) below.
 
 ## Setup
 
@@ -81,6 +81,26 @@ Input is a `Transcript`; output is a `Review`. Both are Pydantic models in `cqr/
 ```
 
 Other endpoints: `POST /review/batch` `{transcripts: [...]}`, `GET /reviews?needs_human_review=true`, `GET /reviews/{id}` (transcript + review).
+
+### Invariants
+
+Any `Review` — however it was constructed (judge output, API request, test fixture) — satisfies these guarantees, enforced by a `@model_validator` in `cqr/schema.py`:
+
+- **`risk_flags`**: exactly one entry per `(type, severity)` pair. Duplicates collapse; turns aggregate and sort; rationales dedupe-and-join with `" | "`. Output is sorted by severity desc, then type asc.
+- **`sentiment_trajectory`**: sorted by turn ascending.
+- **`sentiment_delta`**: derived as `last.score − first.score` rounded to 2dp (`0.0` when fewer than two points).
+- **`needs_human_review`**: `true` iff any risk flag is `medium` or `high`, OR `correctness == contradicted`.
+- **`correctness`**: forced to `unverifiable` at judge time when the transcript has no `reference` (this one lives in `judge._finalize` since it depends on external context, not the review alone).
+
+Callers should never compute the derived fields themselves — supplied values are overwritten.
+
+### Error behavior
+
+The Anthropic judge validates its own output against `Review` and retries up to twice on malformed JSON before raising `RuntimeError`. `POST /review/batch` collects per-transcript failures into an `errors` array rather than aborting the batch, so partial success is the norm; `reviews` and `errors` are both returned. `POST /review` (single) surfaces the error as a 500 with the exception type and message.
+
+### What's stable
+
+The `Transcript` and `Review` schemas are the public contract. Judge implementations, rubric wording, dashboard HTML, storage layout, and CLI flag names are internal and may change.
 
 ## Layout
 

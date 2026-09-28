@@ -145,8 +145,24 @@ class Review(BaseModel):
     @model_validator(mode="after")
     def _enforce_invariants(self):
         """Contract-level invariants enforced at construction. Any code path that
-        builds a Review — judge output, API request, test fixture — obeys these."""
+        builds a Review — judge output, API request, test fixture — obeys these:
+
+        1. risk_flags: exactly one entry per (type, severity), sorted deterministically.
+        2. sentiment_trajectory: sorted by turn ascending.
+        3. sentiment_delta: derived as last.score - first.score (or 0 if <2 points).
+        4. needs_human_review: derived as any medium+ risk flag OR correctness==contradicted.
+
+        Whatever the judge (or caller) supplied for the derived fields is overwritten."""
         self.risk_flags = _dedupe_risk_flags(self.risk_flags)
+        self.sentiment_trajectory = sorted(self.sentiment_trajectory, key=lambda p: p.turn)
+        self.sentiment_delta = (
+            round(self.sentiment_trajectory[-1].score - self.sentiment_trajectory[0].score, 2)
+            if len(self.sentiment_trajectory) >= 2 else 0.0
+        )
+        self.needs_human_review = (
+            any(f.severity.value in ("medium", "high") for f in self.risk_flags)
+            or self.correctness.level == Correctness.contradicted.value
+        )
         return self
 
     @property

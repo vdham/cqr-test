@@ -30,30 +30,21 @@ class Judge(Protocol):
 # --------------------------------------------------------------- helpers ----
 
 def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
-    """Validate the judge's dict against the contract and derive the fields we
-    never trust the judge to compute (delta, needs_human_review)."""
+    """Stamp provenance, override correctness when there is no reference, and hand
+    off to Pydantic. All other derivations (risk_flag dedupe, sentiment_delta,
+    needs_human_review, trajectory sort) are enforced by the Review model itself."""
     raw = dict(raw)
     raw["transcript_id"] = t.id
     raw["source"] = t.source
     raw["intent"] = t.intent
     raw["judge"] = judge_name
-    # Correctness without a reference is unverifiable, whatever the judge said.
     if not t.reference and raw.get("correctness", {}).get("level") != Correctness.unverifiable.value:
         raw["correctness"] = {
             "level": Correctness.unverifiable.value,
             "rationale": "No reference policy provided for this conversation; claims cannot be checked.",
             "turns": [],
         }
-    review = Review.model_validate(raw)
-
-    traj = sorted(review.sentiment_trajectory, key=lambda p: p.turn)
-    review.sentiment_trajectory = traj
-    review.sentiment_delta = round(traj[-1].score - traj[0].score, 2) if len(traj) >= 2 else 0.0
-    review.needs_human_review = (
-        any(f.severity in (Level3.medium, Level3.high) for f in review.risk_flags)
-        or review.correctness.level == Correctness.contradicted.value
-    )
-    return review
+    return Review.model_validate(raw)
 
 
 def _extract_json(text: str) -> dict:
