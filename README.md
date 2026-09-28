@@ -45,6 +45,16 @@ python scripts/eval_synthetic.py
 uvicorn cqr.api:app --reload      # dashboard http://127.0.0.1:8000/  ·  Swagger UI http://127.0.0.1:8000/docs (prefilled example bodies)
 ```
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest                          # 126 tests, ~1s, no network
+coverage run --source=cqr -m pytest && coverage report   # 100% line coverage
+```
+
+Tests are pure-Python and hermetic: the Anthropic client is stubbed, the store uses `tmp_path`, and the FastAPI endpoints run through `TestClient` against a `HeuristicJudge`. `scripts/eval_synthetic.py` is a separate LLM-behavior eval — it needs `ANTHROPIC_API_KEY` and hits the real model.
+
 ## Contract
 
 Input is a `Transcript`; output is a `Review`. Both are Pydantic models in `cqr/schema.py`, and FastAPI publishes the OpenAPI spec at `/docs`.
