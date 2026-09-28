@@ -81,9 +81,9 @@ class AnthropicJudge:
             msg = self.client.messages.create(
                 model=self.model,
                 max_tokens=2000,
-                temperature=0,
                 system=SYSTEM,
                 messages=[{"role": "user", "content": prompt}],
+                extra_body={"temperature": 0},
             )
             text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
             try:
