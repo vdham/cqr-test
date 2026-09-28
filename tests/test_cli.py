@@ -82,14 +82,17 @@ class TestReviewCommand:
 
 
 class TestShowCommand:
-    def test_prints_stored_reviews(self, tmp_path, sample_transcript, capsys):
+    def _seed(self, tmp_path, transcripts):
         jsonl = tmp_path / "syn.jsonl"
         out = tmp_path / "reviews.json"
-        dump_jsonl([sample_transcript], jsonl)
+        dump_jsonl(transcripts, jsonl)
         cli.main(["review", "--synthetic", str(jsonl), "--judge", "heuristic",
                   "--out", str(out)])
-        capsys.readouterr()  # discard review output
+        return out
 
+    def test_prints_stored_reviews(self, tmp_path, sample_transcript, capsys):
+        out = self._seed(tmp_path, [sample_transcript])
+        capsys.readouterr()
         cli.main(["show", str(out)])
         stdout = capsys.readouterr().out
         assert sample_transcript.id in stdout
@@ -100,11 +103,84 @@ class TestShowCommand:
         monkeypatch.chdir(tmp_path)
         jsonl = tmp_path / "syn.jsonl"
         dump_jsonl([sample_transcript], jsonl)
-        # write to the default location (out/reviews.json).
         cli.main(["review", "--synthetic", str(jsonl), "--judge", "heuristic"])
         capsys.readouterr()
-        cli.main(["show"])  # default path
+        cli.main(["show"])
         assert sample_transcript.id in capsys.readouterr().out
+
+    def test_needs_review_filter(self, tmp_path, capsys, make_turn):
+        # Two convos: one with a PII trigger (needs review), one clean.
+        from cqr.schema import Transcript
+        clean = Transcript(id="clean", source="synthetic",
+                           turns=[make_turn(0, "agent", "hi"),
+                                  make_turn(1, "customer", "help")])
+        pii = Transcript(id="pii-1", source="synthetic",
+                         turns=[make_turn(0, "customer", "card update"),
+                                make_turn(1, "agent", "share your full 16-digit card number and CVV")])
+        out = self._seed(tmp_path, [clean, pii])
+        capsys.readouterr()
+        cli.main(["show", str(out), "--needs-review"])
+        stdout = capsys.readouterr().out
+        assert "pii-1" in stdout
+        assert "clean" not in stdout
+
+    def test_source_filter(self, tmp_path, capsys, make_turn):
+        from cqr.schema import Transcript
+        syn = Transcript(id="syn", source="synthetic",
+                         turns=[make_turn(0, "agent", "hi"), make_turn(1, "customer", "?")])
+        up = Transcript(id="up", source="upload",
+                        turns=[make_turn(0, "agent", "hi"), make_turn(1, "customer", "?")])
+        out = self._seed(tmp_path, [syn, up])
+        capsys.readouterr()
+        cli.main(["show", str(out), "--source", "synthetic"])
+        stdout = capsys.readouterr().out
+        assert "syn" in stdout and "up " not in stdout  # 'up' as bare id column
+
+    def test_json_output_is_valid_json(self, tmp_path, capsys, sample_transcript):
+        import json as _json
+        out = self._seed(tmp_path, [sample_transcript])
+        capsys.readouterr()
+        cli.main(["show", str(out), "--json"])
+        data = _json.loads(capsys.readouterr().out)
+        assert isinstance(data, list) and len(data) == 1
+        assert data[0]["transcript_id"] == sample_transcript.id
+
+
+class TestFreshFlag:
+    def test_fresh_wipes_prior_store(self, tmp_path, sample_transcript, make_turn):
+        from cqr.schema import Transcript
+        first = tmp_path / "one.jsonl"
+        second = tmp_path / "two.jsonl"
+        out = tmp_path / "reviews.json"
+        dump_jsonl([sample_transcript], first)
+        cli.main(["review", "--synthetic", str(first), "--judge", "heuristic",
+                  "--out", str(out)])
+        # Second run with --fresh discards the first review.
+        other = Transcript(id="other", source="synthetic",
+                           turns=[make_turn(0, "agent", "hi"), make_turn(1, "customer", "help")])
+        dump_jsonl([other], second)
+        cli.main(["review", "--synthetic", str(second), "--judge", "heuristic",
+                  "--out", str(out), "--fresh"])
+        from cqr.store import Store
+        remaining = {r.transcript_id for r in Store(out).all()}
+        assert remaining == {"other"}
+
+    def test_default_merges_by_id(self, tmp_path, sample_transcript, make_turn):
+        from cqr.schema import Transcript
+        first = tmp_path / "one.jsonl"
+        second = tmp_path / "two.jsonl"
+        out = tmp_path / "reviews.json"
+        dump_jsonl([sample_transcript], first)
+        cli.main(["review", "--synthetic", str(first), "--judge", "heuristic",
+                  "--out", str(out)])
+        other = Transcript(id="other", source="synthetic",
+                           turns=[make_turn(0, "agent", "hi"), make_turn(1, "customer", "help")])
+        dump_jsonl([other], second)
+        cli.main(["review", "--synthetic", str(second), "--judge", "heuristic",
+                  "--out", str(out)])
+        from cqr.store import Store
+        remaining = {r.transcript_id for r in Store(out).all()}
+        assert remaining == {sample_transcript.id, "other"}
 
 
 class TestArgparse:

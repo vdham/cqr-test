@@ -62,6 +62,7 @@
 </main>
 <script>
 const $ = s => document.querySelector(s);
+const esc = s => (s == null ? '' : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
 let reviews = [], active = null;
 
 const LEVEL_COLOR = {
@@ -81,14 +82,14 @@ async function load() {
 
 function renderList() {
   $('#list').innerHTML = reviews.map(r => `
-    <div class="row ${r.transcript_id===active?'active':''}" data-id="${r.transcript_id}">
-      <div class="id">${r.needs_human_review?'⚠ ':''}${r.transcript_id} <span class="b">${r.source}</span></div>
-      <div class="sum">${r.summary || ''}</div>
+    <div class="row ${r.transcript_id===active?'active':''}" data-id="${esc(r.transcript_id)}">
+      <div class="id">${r.needs_human_review?'⚠ ':''}${esc(r.transcript_id)} <span class="b">${esc(r.source)}</span></div>
+      <div class="sum">${esc(r.summary || '')}</div>
       <div class="badges">
-        ${r.risk_flags.map(f=>badge(f.type.replace(/_/g,' '), f.severity==='high'?'red':f.severity==='medium'?'amber':'')).join('')}
-        ${badge(r.resolution.level.replace(/_/g,' '), LEVEL_COLOR.resolution[r.resolution.level])}
-        ${badge('correctness: '+r.correctness.level, LEVEL_COLOR.correctness[r.correctness.level])}
-        ${badge('effort '+r.customer_effort.level, LEVEL_COLOR.customer_effort[r.customer_effort.level])}
+        ${r.risk_flags.map(f=>badge(esc(f.type.replace(/_/g,' ')), f.severity==='high'?'red':f.severity==='medium'?'amber':'')).join('')}
+        ${badge(esc(r.resolution.level.replace(/_/g,' ')), LEVEL_COLOR.resolution[r.resolution.level])}
+        ${badge('correctness: '+esc(r.correctness.level), LEVEL_COLOR.correctness[r.correctness.level])}
+        ${badge('effort '+esc(r.customer_effort.level), LEVEL_COLOR.customer_effort[r.customer_effort.level])}
       </div>
     </div>`).join('');
   document.querySelectorAll('.row').forEach(el => el.onclick = () => open(el.dataset.id));
@@ -110,9 +111,9 @@ function sparkline(traj) {
 function card(title, sig, kind) {
   const cls = LEVEL_COLOR[kind]?.[sig.level] ?? '';
   return `<div class="card">
-    <h3>${title} ${badge(sig.level.replace(/_/g,' '), cls)}</h3>
-    <p>${sig.rationale}</p>
-    <div class="turns">${(sig.turns||[]).map(i=>`<a data-turn="${i}">turn ${i}</a>`).join('')}</div>
+    <h3>${esc(title)} ${badge(esc(sig.level.replace(/_/g,' ')), cls)}</h3>
+    <p>${esc(sig.rationale)}</p>
+    <div class="turns">${(sig.turns||[]).map(i=>`<a data-turn="${esc(i)}">turn ${esc(i)}</a>`).join('')}</div>
   </div>`;
 }
 
@@ -121,13 +122,15 @@ async function open(id) {
   const {transcript:t, review:r} = await (await fetch('/reviews/'+id)).json();
   const flags = r.risk_flags.length ? r.risk_flags.map(f => `
     <div class="card flag ${f.severity}">
-      <h3>${f.type.replace(/_/g,' ')} ${badge(f.severity, f.severity==='high'?'red':f.severity==='medium'?'amber':'')}</h3>
-      <p>${f.rationale}</p>
-      <div class="turns">${f.turns.map(i=>`<a data-turn="${i}">turn ${i}</a>`).join('')}</div>
+      <h3>${esc(f.type.replace(/_/g,' '))} ${badge(esc(f.severity), f.severity==='high'?'red':f.severity==='medium'?'amber':'')}</h3>
+      <p>${esc(f.rationale)}</p>
+      <div class="turns">${f.turns.map(i=>`<a data-turn="${esc(i)}">turn ${esc(i)}</a>`).join('')}</div>
     </div>`).join('') : `<div class="card"><h3>No risk flags</h3></div>`;
 
+  const warns = (r.warnings && r.warnings.length) ? `<div class="tier">Warnings</div><ul style="margin:0;padding-left:20px;color:var(--muted);font-size:12px">${r.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>` : '';
+
   $('#detail').innerHTML = `
-    <h2 style="margin:0">${r.needs_human_review?'⚠ ':''}${t.id}</h2>
+    <h2 style="margin:0">${r.needs_human_review?'⚠ ':''}${esc(t.id)}</h2>
     <div class="meta" style="color:var(--muted)">source ${esc(t.source)} · intent ${esc(t.intent||'—')} · judge <code>${esc(r.judge)}</code> · rubric <code>${esc(r.rubric_version||'?')}</code> · sentiment Δ ${r.sentiment_delta>0?'+':''}${r.sentiment_delta}</div>
     <p style="margin:8px 0 0">${esc(r.summary||'')}</p>
 
@@ -145,13 +148,13 @@ async function open(id) {
 
     <div class="tier">Reference the agent was judged against</div>
     <div class="ref">${t.reference ? esc(t.reference) : '(none — correctness is unverifiable for this conversation)'}</div>
+    ${warns}
   `;
   document.querySelectorAll('[data-turn]').forEach(a => a.onclick = () => {
     document.querySelectorAll('.t.hl').forEach(e=>e.classList.remove('hl'));
     const el = $('#turn-'+a.dataset.turn); if (el) { el.classList.add('hl'); el.scrollIntoView({block:'center', behavior:'smooth'}); }
   });
 }
-const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 $('#onlyFlag').onchange = load;
 load();
 </script>

@@ -50,7 +50,7 @@ transcripts = [
 
     # 2. Unauthorized promise. Policy: refund methods are gift card / add value / paper check / credit card; no timeline promise in guidelines.
     T("syn-02-unauthorized-promise", "product_defect/refund_initiate", REF_REFUND,
-      "risk=unauthorized_promise; correctness=unverifiable or contradicted (timeline not in policy)",
+      "risk=unauthorized_promise; correctness=unverifiable|contradicted (timeline not in policy)",
       (A, "Hello! How can I help today?"),
       (C, "I need a refund for a jacket that came ripped. Username jlee88, order 77120034."),
       (A, "I'm so sorry to hear that. Let me pull up your account. Full name please?"),

@@ -51,6 +51,7 @@ Consumable three ways: `POST /review` (one transcript → review), `POST /review
 
 - Single judge model, single sample, no ensembling.
 - Regex baseline is deliberately crude; it is a foil, not a fallback.
+- The heuristic patterns were written after the synthetic transcripts; its eval score shows the pipeline works, not that regex is a calibrated baseline.
 - Reference lookup is by ABCD intent key with a fuzzy match; no retrieval.
 - No tests beyond the synthetic eval script; no auth; JSON file store; no redaction.
 - The UI is one HTML file with no build step. It exists to make the rationale and turn citations visible in a live demo, not to be a product.

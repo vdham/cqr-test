@@ -59,6 +59,17 @@ Tests are pure-Python and hermetic: the Anthropic client is stubbed, the store u
 
 Input is a `Transcript`; output is a `Review`. Both are Pydantic models in `cqr/schema.py`, and FastAPI publishes the OpenAPI spec at `/docs`.
 
+Callable directly from Python — the API and CLI are wrappers around this two-line contract:
+
+```python
+from cqr.judge import get_judge
+from cqr.schema import Transcript, Turn
+review = get_judge().judge(Transcript(id="c1", source="upload",
+                                      turns=[Turn(speaker="agent", text="Hi"),
+                                             Turn(speaker="customer", text="?")]))
+review.model_dump()
+```
+
 ```jsonc
 // POST /review
 {

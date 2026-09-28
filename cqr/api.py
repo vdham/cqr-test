@@ -19,7 +19,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from .judge import get_judge
-from .schema import BatchReviewRequest, BatchReviewResponse, Review, Transcript
+from .schema import BatchReviewRequest, BatchReviewResponse, Review, Transcript, sort_key
 from .store import Store
 
 app = FastAPI(title="Conversation Quality Reviewer", version="0.1")
@@ -101,10 +101,6 @@ def review_batch(
     return BatchReviewResponse(reviews=out, errors=errs)
 
 
-def _sort_key(r: Review):
-    return (-r.max_risk, r.correctness.level != "contradicted", r.resolution.level != "unresolved", r.transcript_id)
-
-
 @app.get("/reviews", response_model=list[Review], summary="List stored reviews, riskiest first")
 def list_reviews(needs_human_review: bool | None = Query(default=None), source: str | None = None):
     """Return all persisted reviews, sorted by risk descending. Filter with
@@ -116,7 +112,7 @@ def list_reviews(needs_human_review: bool | None = Query(default=None), source: 
         rs = [r for r in rs if r.needs_human_review == needs_human_review]
     if source:
         rs = [r for r in rs if r.source == source]
-    return sorted(rs, key=_sort_key)
+    return sorted(rs, key=sort_key)
 
 
 @app.get("/reviews/{id_}", summary="Get one review with its transcript")
