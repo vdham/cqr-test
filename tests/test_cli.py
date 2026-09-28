@@ -64,8 +64,8 @@ class TestReviewCommand:
         data = json.loads(out.read_text())
         assert len(data["reviews"]) == 7
 
-    def test_judge_failure_counted_not_raised(self, tmp_path, sample_transcript,
-                                              capsys, monkeypatch):
+    def test_judge_failure_exits_1(self, tmp_path, sample_transcript,
+                                    capsys, monkeypatch):
         jsonl = tmp_path / "syn.jsonl"
         out = tmp_path / "reviews.json"
         dump_jsonl([sample_transcript], jsonl)
@@ -74,11 +74,74 @@ class TestReviewCommand:
         def boom(self, t): raise RuntimeError("planned")
         monkeypatch.setattr(HeuristicJudge, "judge", boom)
 
-        cli.main(["review", "--synthetic", str(jsonl), "--judge", "heuristic",
-                  "--out", str(out)])
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["review", "--synthetic", str(jsonl), "--judge", "heuristic",
+                      "--out", str(out)])
+        assert exc.value.code == 1
         err = capsys.readouterr().err
         assert "1 failed" in err
         assert "RuntimeError" in err
+
+    def test_missing_file_exits_2(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["review", "--synthetic", str(tmp_path / "does-not-exist.jsonl"),
+                      "--judge", "heuristic", "--out", str(tmp_path / "r.json")])
+        assert exc.value.code == 2
+        assert "not found" in capsys.readouterr().err
+
+    def test_missing_abcd_dir_exits_2(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["review", "--abcd", str(tmp_path / "no-such-abcd"),
+                      "--judge", "heuristic", "--out", str(tmp_path / "r.json")])
+        assert exc.value.code == 2
+
+    def test_malformed_jsonl_lines_skipped(self, tmp_path, sample_transcript, capsys):
+        jsonl = tmp_path / "mixed.jsonl"
+        jsonl.write_text(
+            sample_transcript.model_dump_json() + "\n"
+            + "\n"                                         # blank line: silently skipped
+            + "not json at all\n"
+            + '{"id": "bad", "incomplete": true}\n'
+        )
+        out = tmp_path / "reviews.json"
+        cli.main(["review", "--synthetic", str(jsonl), "--judge", "heuristic",
+                  "--out", str(out)])
+        err = capsys.readouterr().err
+        assert "2 malformed line(s) skipped" in err
+        # The one good transcript still got reviewed.
+        data = json.loads(out.read_text())
+        assert sample_transcript.id in data["reviews"]
+
+    def test_concurrency_flag_runs_in_parallel(self, tmp_path, make_turn, capsys):
+        """Concurrency > 1 uses a ThreadPoolExecutor; results merge into the store
+        just like sequential runs, just faster on real workloads."""
+        from cqr.schema import Transcript
+        ts = [Transcript(id=f"c{i}", source="test",
+                         turns=[make_turn(0, "agent", "hi"), make_turn(1, "customer", "?")])
+              for i in range(6)]
+        jsonl = tmp_path / "c.jsonl"
+        out = tmp_path / "reviews.json"
+        dump_jsonl(ts, jsonl)
+        cli.main(["review", "--synthetic", str(jsonl), "--judge", "heuristic",
+                  "--out", str(out), "--concurrency", "3"])
+        data = json.loads(out.read_text())
+        assert len(data["reviews"]) == 6
+        assert "concurrency=3" in capsys.readouterr().err
+
+    def test_concurrency_captures_per_item_failures(self, tmp_path, sample_transcript,
+                                                    capsys, monkeypatch):
+        """The parallel path must surface exceptions per-item like the serial one."""
+        jsonl = tmp_path / "syn.jsonl"
+        out = tmp_path / "reviews.json"
+        dump_jsonl([sample_transcript], jsonl)
+        from cqr.judge import HeuristicJudge
+        def boom(self, t): raise RuntimeError("planned-parallel")
+        monkeypatch.setattr(HeuristicJudge, "judge", boom)
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["review", "--synthetic", str(jsonl), "--judge", "heuristic",
+                      "--out", str(out), "--concurrency", "2"])
+        assert exc.value.code == 1
+        assert "planned-parallel" in capsys.readouterr().err
 
 
 class TestShowCommand:

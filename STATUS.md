@@ -5,14 +5,13 @@ _Last updated: 2026-09-28 — by: Vikram_
 | Spec | Goal | State | Next task |
 |---|---|---|---|
 | [001-fixes](specs/001-fixes/tasks.md) | Close the review findings: contract enforcement, guideline lookup, rubric, docs | **done** (`b7c8d5e`..`daee7b3`) | — |
-| [002-batch-litellm](specs/002-batch-litellm/tasks.md) | Async batch jobs with bounded queue; LiteLLM judge with classified errors | not started | Part 1: `cqr/jobs.py` (`JobRunner` + bounded queue) |
+| [002-batch-litellm](specs/002-batch-litellm/tasks.md) | Async batch jobs with bounded queue; LiteLLM judge with classified errors | **Part 1 done**, Part 2 pending | Part 2: `LLMJudge` + `cqr/errors.py` + `/health` |
 
 ## Done this session
-- Added the management scaffold (`AGENTS.md`, `STATUS.md`, `specs/`, ADRs, `CHANGELOG.md`, `CQR_FIXES.md`).
-- Closed all of `specs/001-fixes` in five commits (§A–§E). 229 hermetic tests, 100% line coverage on `cqr/*`, heuristic eval 18/22, Anthropic eval 22/22 (committed at `examples/reviews.anthropic.json`).
+- Closed Part 1 of `specs/002-batch-litellm`: `cqr/jobs.py` with `JobRunner` (asyncio queue + workers via `to_thread`, latched circuit breaker, LRU eviction, idempotency), schema additions (`Job`, `JobStatus`, `JobError`, `BatchAccepted`, `Review.job_id`, `CQR_MAX_BATCH`), rewired `/review/batch` to 202+poll (with `?wait=true`), added `/jobs`, `/jobs/{id}`, `/jobs/{id}/reviews`, `/reviews?job_id=`, `Idempotency-Key`. CLI gets `--concurrency`, exit-1-on-failure, exit-2-on-missing-file, malformed-JSONL tolerance. Dashboard surfaces `job_id`. 263 hermetic tests, 100% coverage on `cqr/*`.
 
 ## Next
-- Work `specs/002-batch-litellm/tasks.md` Part 1 (in-process bounded queue + job endpoints), then Part 2 (LiteLLM judge with classified errors). Full instructions at `specs/002-batch-litellm/PROMPT.md`.
+- Work `specs/002-batch-litellm/tasks.md` Part 2 (LiteLLM judge + classified errors + `/health` + `JudgeRejected` → CLI exit 3). Full instructions at `specs/002-batch-litellm/PROMPT.md`.
 
 ## Blocked / open questions
 - None.

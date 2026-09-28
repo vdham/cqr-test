@@ -1,12 +1,12 @@
 # 002 — tasks
 
 ## Part 1 — commit `feat(api): async batch jobs with bounded in-process queue`
-- [ ] `cqr/jobs.py`: `Job`, `JobError`, `JobRunner` (queue + N workers via `to_thread`, flush cadence, eviction, idempotency, circuit breaker)
-- [ ] `schema.py`: `Review.job_id`, `BatchAccepted`, `CQR_MAX_BATCH` on `transcripts`
-- [ ] `api.py`: lifespan wiring; `POST /review/batch` → 202; `?wait=true`; `GET /jobs`, `/jobs/{id}`, `/jobs/{id}/reviews`; `/reviews?job_id=`; `Idempotency-Key`
-- [ ] `cli.py`: `--concurrency`, exit 1 on failures, exit 2 on missing file, skip malformed JSONL lines
-- [ ] Dashboard meta shows `job_id`
-- [ ] `tests/test_jobs.py` + API/CLI test additions; coverage 100%
+- [x] `cqr/jobs.py`: `JobRunner` (queue + N workers via `to_thread`, flush cadence, LRU eviction, idempotency, latched circuit breaker)
+- [x] `schema.py`: `Review.job_id`, `BatchAccepted`, `Job`, `JobStatus`, `JobError`, `CQR_MAX_BATCH` on `transcripts`
+- [x] `api.py`: lifespan wiring; `POST /review/batch` → 202; `?wait=true`; `GET /jobs`, `/jobs/{id}`, `/jobs/{id}/reviews`; `/reviews?job_id=`; `Idempotency-Key`
+- [x] `cli.py`: `--concurrency`, exit 1 on failures, exit 2 on missing file, skip malformed JSONL lines
+- [x] Dashboard meta shows `job_id`
+- [x] `tests/test_jobs.py` + API/CLI test additions; coverage 100% (263 tests)
 
 ## Part 2 — commit `feat(judge): LiteLLM-backed judge with classified errors`
 - [ ] `requirements.txt`: `litellm`; drop `anthropic` if unused

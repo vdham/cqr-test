@@ -3,13 +3,20 @@ The contract. Everything in and out of the reviewer is one of these models.
 
 Input:  Transcript  (a normalized conversation, source-agnostic)
 Output: Review      (per-signal levels with rationale + turn citations)
+Job types (Job, JobStatus, JobError, BatchAccepted) describe the async
+batch protocol; the runtime that fulfils them lives in `cqr/jobs.py`.
 """
 from __future__ import annotations
 
+import os
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
+
+
+CQR_MAX_BATCH = int(os.environ.get("CQR_MAX_BATCH", "200"))
 
 
 # ---------------------------------------------------------------- input ----
@@ -174,8 +181,9 @@ class Review(BaseModel):
     sentiment_delta: float = Field(default=0.0, description="end minus start; positive = agent moved the customer up. Always present — set by the Review validator.")
 
     # Provenance
-    judge: str = Field(description="which judge produced this: anthropic:<model> | heuristic")
+    judge: str = Field(description="which judge produced this: anthropic:<model> | heuristic | llm:<model>")
     rubric_version: str = Field(description="Version of the rubric this review was scored against. Stamped by the judge.")
+    job_id: Optional[str] = Field(default=None, description="If this review came from a batch job, the JobRunner id. None for single POST /review calls.")
     needs_human_review: bool = Field(default=False, description="True when any risk flag is medium+ or correctness is contradicted. Always present — set by the Review validator.")
     summary: str = Field(default="", description="One line a supervisor can read in a list view")
 
@@ -222,9 +230,44 @@ def sort_key(r: Review):
 
 
 class BatchReviewRequest(BaseModel):
-    transcripts: list[Transcript]
+    transcripts: list[Transcript] = Field(max_length=CQR_MAX_BATCH)
 
 
 class BatchReviewResponse(BaseModel):
     reviews: list[Review]
     errors: list[dict] = Field(default_factory=list)
+
+
+# -------------------------------------------------------------------- jobs ----
+
+class JobStatus(str, Enum):
+    queued = "queued"           # accepted, waiting for a worker
+    running = "running"         # at least one item picked up
+    completed = "completed"     # every item accounted for; may include per-item errors
+    failed = "failed"           # config-scope abort (bad key etc.); item work stopped
+
+
+class JobError(BaseModel):
+    transcript_id: str
+    error_type: str = Field(description="Exception class name or JudgeError subclass name.")
+    message: str
+    retryable: bool = Field(default=True, description="True if a resubmit could succeed; controls circuit-breaker counting and dashboard treatment.")
+    attempts: int = 1
+
+
+class Job(BaseModel):
+    id: str
+    status: JobStatus = JobStatus.queued
+    total: int
+    completed: int = 0
+    errors: list[JobError] = Field(default_factory=list)
+    idempotency_key: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: Optional[datetime] = None
+
+
+class BatchAccepted(BaseModel):
+    """Body of a 202 response to POST /review/batch."""
+    job_id: str
+    status: JobStatus
+    total: int

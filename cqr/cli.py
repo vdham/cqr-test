@@ -3,11 +3,17 @@ CLI: batch-review transcripts.
 
   python -m cqr.cli review --abcd data/abcd --limit 15 --synthetic data/synthetic.jsonl
   python -m cqr.cli review --jsonl my_transcripts.jsonl --judge heuristic --fresh
+  python -m cqr.cli review --jsonl big.jsonl --judge anthropic --concurrency 4
   python -m cqr.cli show --needs-review --source synthetic
   python -m cqr.cli show --json | jq .
 
 `review` merges into `--out` by transcript id: successive runs update matching
 ids and add new ones. Pass `--fresh` to start from an empty store instead.
+
+Exit codes:
+  0 = all reviewed successfully
+  1 = at least one per-transcript failure
+  2 = an input file / dir doesn't exist
 """
 from __future__ import annotations
 
@@ -15,26 +21,75 @@ import argparse
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Iterable, Optional
 
 from .judge import get_judge
 from .loader import load_abcd, load_jsonl
-from .schema import Transcript, sort_key
+from .schema import Review, Transcript, sort_key
 from .store import Store
+
+
+def _load_jsonl_lenient(path: Path, label: str) -> list[Transcript]:
+    """Skip lines that don't parse as a Transcript, print a count to stderr."""
+    good: list[Transcript] = []
+    bad = 0
+    for lineno, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            good.append(Transcript.model_validate_json(line))
+        except Exception as e:  # noqa: BLE001
+            bad += 1
+            print(f"  skipping {label}:{lineno}: {type(e).__name__}", file=sys.stderr)
+    if bad:
+        print(f"{bad} malformed line(s) skipped from {path}", file=sys.stderr)
+    return good
 
 
 def _collect(args) -> list[Transcript]:
     ts: list[Transcript] = []
-    if args.synthetic:
-        ts += load_jsonl(Path(args.synthetic))
-    if args.jsonl:
-        ts += load_jsonl(Path(args.jsonl))
+    for path_arg, kind in ((args.synthetic, "synthetic"), (args.jsonl, "jsonl")):
+        if not path_arg:
+            continue
+        p = Path(path_arg)
+        if not p.exists():
+            print(f"error: {kind} file not found: {p}", file=sys.stderr)
+            sys.exit(2)
+        ts += _load_jsonl_lenient(p, kind)
     if args.abcd:
-        ts += load_abcd(Path(args.abcd), split=args.split, limit=args.limit, offset=args.offset)
+        try:
+            ts += load_abcd(Path(args.abcd), split=args.split, limit=args.limit, offset=args.offset)
+        except FileNotFoundError as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(2)
     return ts
 
 
-def cmd_review(args):
+def _run_all(judge, ts: list[Transcript], concurrency: int):
+    """Yield (transcript, review_or_None, exception_or_None) as work completes.
+    Concurrency <=1 runs sequentially; higher uses a ThreadPoolExecutor. The
+    LLM/heuristic call is what parallelizes; the store stays single-threaded
+    in the caller loop."""
+    if concurrency <= 1:
+        for t in ts:
+            try:
+                yield t, judge.judge(t), None
+            except Exception as e:  # noqa: BLE001
+                yield t, None, e
+        return
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        futures = {ex.submit(judge.judge, t): t for t in ts}
+        for future in as_completed(futures):
+            t = futures[future]
+            try:
+                yield t, future.result(), None
+            except Exception as e:  # noqa: BLE001
+                yield t, None, e
+
+
+def cmd_review(args) -> int:
     judge = get_judge(args.judge)
     out_path = Path(args.out)
     if args.fresh and out_path.exists():
@@ -43,27 +98,29 @@ def cmd_review(args):
     ts = _collect(args)
     if not ts:
         sys.exit("no transcripts; pass --abcd, --synthetic, or --jsonl")
-    print(f"judge={judge.name}  transcripts={len(ts)}  out={args.out}", file=sys.stderr)
+    print(f"judge={judge.name}  transcripts={len(ts)}  concurrency={args.concurrency}  out={args.out}", file=sys.stderr)
     errors = 0
     t0 = time.time()
-    for i, t in enumerate(ts, 1):
-        try:
-            r = judge.judge(t)
+    for i, (t, r, err) in enumerate(_run_all(judge, ts, args.concurrency), 1):
+        if err is not None:
+            errors += 1
+            print(f"x {t.id}: {type(err).__name__}: {err}", file=sys.stderr)
+        else:
             store.put(t, r)
             flag = "!" if r.needs_human_review else " "
             print(f"{flag} {t.id:28s} res={r.resolution.level.value:22s} corr={r.correctness.level.value:13s} "
                   f"effort={r.customer_effort.level.value:6s} iq={r.interaction_quality.level.value:6s} "
                   f"flags={[f.type.value for f in r.risk_flags]}", file=sys.stderr)
-        except Exception as e:  # noqa: BLE001
-            errors += 1
-            print(f"x {t.id}: {type(e).__name__}: {e}", file=sys.stderr)
         if i % 5 == 0:
             store.flush()
     store.flush()
     print(f"done: {len(ts) - errors} ok, {errors} failed, {time.time() - t0:.1f}s", file=sys.stderr)
+    if errors:
+        sys.exit(1)
+    return 0
 
 
-def cmd_show(args):
+def cmd_show(args) -> int:
     store = Store(Path(args.path))
     rs = store.all()
     if args.needs_review:
@@ -75,14 +132,15 @@ def cmd_show(args):
     if args.json:
         json.dump([r.model_dump(mode="json") for r in rs], sys.stdout, indent=2)
         sys.stdout.write("\n")
-        return
+        return 0
 
     for r in rs:
         flag = "!" if r.needs_human_review else " "
         print(f"{flag} {r.transcript_id:28s} risk={r.max_risk} res={r.resolution.level.value:22s} corr={r.correctness.level.value:13s} | {r.summary}")
+    return 0
 
 
-def main(argv=None):
+def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="cqr")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -100,6 +158,8 @@ def main(argv=None):
                    help="review store; merges by transcript id across runs")
     r.add_argument("--fresh", action="store_true",
                    help="delete --out before starting; otherwise reviews merge by transcript id")
+    r.add_argument("--concurrency", type=int, default=1,
+                   help="run judge calls in parallel across N threads (default: 1)")
     r.set_defaults(fn=cmd_review)
 
     s = sub.add_parser("show", help="print a stored review set, riskiest first")
@@ -111,8 +171,8 @@ def main(argv=None):
     s.set_defaults(fn=cmd_show)
 
     args = p.parse_args(argv)
-    args.fn(args)
+    return args.fn(args)
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    sys.exit(main())
