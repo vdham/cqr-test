@@ -28,6 +28,7 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import Callable, Optional
 
+from .errors import JudgeError
 from .schema import Job, JobError, JobStatus, Review, Transcript
 from .store import Store
 
@@ -137,7 +138,28 @@ class JobRunner:
             review.job_id = job_id
             self._store.put(t, review)
             self._consec_retryable[job_id] = 0  # success resets the streak
+        except JudgeError as je:
+            # Classified failure: carry retryable/attempts through; if the
+            # scope is config, the whole job aborts (every remaining item
+            # would repeat the same failure).
+            job.errors.append(JobError(
+                transcript_id=t.id, error_type=type(je).__name__,
+                message=str(je)[:400], retryable=je.retryable, attempts=je.attempts,
+            ))
+            if je.scope == "config":
+                job.status = JobStatus.failed
+                job.completed_at = datetime.now(UTC)
+            elif je.retryable:
+                streak = self._consec_retryable.get(job_id, 0) + 1
+                self._consec_retryable[job_id] = streak
+                if streak >= self._circuit_threshold:
+                    self._circuit_open_jobs.add(job_id)
+            else:
+                # Terminal transcript-scope (e.g. content policy): resets streak.
+                self._consec_retryable[job_id] = 0
         except Exception as e:  # noqa: BLE001
+            # Unclassified: treat as retryable transcript-scope so nothing
+            # crashes the runner and the circuit still counts it.
             job.errors.append(JobError(
                 transcript_id=t.id, error_type=type(e).__name__,
                 message=str(e)[:400], retryable=True, attempts=1,

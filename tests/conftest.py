@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -114,20 +113,6 @@ def guidelines_dict():
             },
         },
     }
-
-
-def mock_anthropic_client(responses: list[str]):
-    """Build a stub that mimics anthropic.Anthropic().messages.create(). Each
-    call pops the next string from `responses` and returns it as message text."""
-    calls: list[dict] = []
-
-    def create(**kwargs):
-        calls.append(kwargs)
-        text = responses.pop(0)
-        return SimpleNamespace(content=[SimpleNamespace(text=text, type="text")])
-
-    client = SimpleNamespace(messages=SimpleNamespace(create=create))
-    return client, calls
 
 
 def valid_review_json(**overrides) -> str:

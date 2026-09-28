@@ -21,9 +21,10 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
-from fastapi.responses import HTMLResponse
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from .errors import JudgeError
 from .jobs import JobRunner, wait_for_job
 from .judge import get_judge
 from .schema import (BatchAccepted, BatchReviewRequest, Job, Review, Transcript,
@@ -65,6 +66,45 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Conversation Quality Reviewer", version="0.2", lifespan=_lifespan)
+
+
+@app.exception_handler(JudgeError)
+async def _judge_error_handler(request: Request, exc: JudgeError):
+    """Map a classified JudgeError onto HTTP: use the class's `http_status`,
+    body carries `error_type`/`message`/`retryable`/`attempts`, and 5xx-retryable
+    responses include a `Retry-After: 30` hint. Callers can react without
+    parsing exception text."""
+    headers = {}
+    if exc.retryable:
+        headers["Retry-After"] = "30"
+    return JSONResponse(
+        status_code=exc.http_status,
+        content={
+            "error_type": type(exc).__name__,
+            "message": str(exc),
+            "retryable": exc.retryable,
+            "attempts": exc.attempts,
+        },
+        headers=headers,
+    )
+
+
+@app.get("/health", summary="Liveness check", include_in_schema=True)
+def health():
+    """Report basic process liveness without touching any provider. Returns
+    the resolved judge kind (heuristic/llm) and the concrete model, so a
+    load balancer or dashboard can confirm which configuration is live."""
+    judge_env = os.environ.get("CQR_JUDGE") or ("llm" if (
+        os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("CQR_LLM_BASE_URL")
+    ) else "heuristic")
+    return {
+        "status": "ok",
+        "judge": judge_env,
+        "model": os.environ.get("CQR_MODEL", "claude-sonnet-4-5") if judge_env == "llm" else None,
+        "runner_started": _runner is not None,
+    }
 
 
 _TRANSCRIPT_EXAMPLES = {

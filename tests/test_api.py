@@ -241,6 +241,83 @@ class TestRunnerNotStarted:
         assert c.get("/jobs/anything/reviews").status_code == 503
 
 
+class TestHealth:
+    def test_health_reports_heuristic_when_no_key(self, client, monkeypatch):
+        for k in ("CQR_JUDGE", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CQR_LLM_BASE_URL"):
+            monkeypatch.delenv(k, raising=False)
+        # /health doesn't need CQR_JUDGE to be set — falls back to defaults.
+        r = client.get("/health")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ok"
+        assert body["judge"] == "heuristic"
+        assert body["model"] is None
+        assert body["runner_started"] is True
+
+    def test_health_reports_llm_when_key_present(self, client, monkeypatch):
+        monkeypatch.delenv("CQR_JUDGE", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        body = client.get("/health").json()
+        assert body["judge"] == "llm"
+        assert body["model"] is not None  # CQR_MODEL default
+
+
+class TestJudgeErrorHandler:
+    """The @app.exception_handler(JudgeError) turns typed judge failures into
+    typed HTTP responses so external callers don't parse exception text."""
+
+    def _install_failing_judge(self, monkeypatch, exc_cls, message="planned"):
+        from cqr import api as api_mod
+        from cqr.errors import JudgeError
+
+        class _Judge:
+            name = "test-failing"
+            def judge(self, t):
+                exc = exc_cls(message)
+                exc.attempts = 3
+                raise exc
+
+        monkeypatch.setattr(api_mod, "_judge", _Judge())
+
+    def test_judge_unavailable_returns_503_with_retry_after(self, client, monkeypatch):
+        from cqr.errors import JudgeUnavailable
+        self._install_failing_judge(monkeypatch, JudgeUnavailable)
+        r = client.post("/review", json=_transcript_body("u1"))
+        assert r.status_code == 503
+        assert r.headers.get("retry-after") == "30"
+        body = r.json()
+        assert body["error_type"] == "JudgeUnavailable"
+        assert body["retryable"] is True
+        assert body["attempts"] == 3
+
+    def test_judge_rejected_returns_502(self, client, monkeypatch):
+        from cqr.errors import JudgeRejected
+        self._install_failing_judge(monkeypatch, JudgeRejected)
+        r = client.post("/review", json=_transcript_body("r1"))
+        assert r.status_code == 502
+        assert "retry-after" not in {k.lower() for k in r.headers}
+        body = r.json()
+        assert body["error_type"] == "JudgeRejected"
+        assert body["retryable"] is False
+
+    def test_transcript_rejected_returns_422(self, client, monkeypatch):
+        from cqr.errors import TranscriptRejected
+        self._install_failing_judge(monkeypatch, TranscriptRejected)
+        r = client.post("/review", json=_transcript_body("t1"))
+        assert r.status_code == 422
+        body = r.json()
+        assert body["error_type"] == "TranscriptRejected"
+        assert body["retryable"] is False
+
+    def test_judge_output_invalid_returns_500(self, client, monkeypatch):
+        from cqr.errors import JudgeOutputInvalid
+        self._install_failing_judge(monkeypatch, JudgeOutputInvalid)
+        r = client.post("/review", json=_transcript_body("o1"))
+        assert r.status_code == 500
+        body = r.json()
+        assert body["error_type"] == "JudgeOutputInvalid"
+
+
 class TestDashboardRoot:
     def test_serves_html(self, client):
         resp = client.get("/")

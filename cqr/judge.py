@@ -1,12 +1,24 @@
 """
 Judges turn a Transcript into a Review.
 
-- AnthropicJudge: LLM-as-judge with the anchored rubric. The real thing.
-- HeuristicJudge: keyword/regex baseline. Runs offline with no key, exercises the
-  whole pipeline, and doubles as a "what would a naive classifier get wrong"
-  comparison in the demo. It is deliberately dumb.
+- LLMJudge: LiteLLM-backed LLM-as-judge with the anchored rubric. Production
+  path. Any provider LiteLLM speaks — Anthropic, OpenAI, Azure, self-hosted
+  OpenAI-compatible gateways — via one interface. Errors from `litellm` are
+  classified into the four `JudgeError` subclasses (`cqr/errors.py`) so
+  callers get typed failures instead of provider-shaped exceptions.
+- HeuristicJudge: keyword/regex baseline. Runs offline with no key, exercises
+  the whole pipeline, and doubles as a "what would a naive classifier get
+  wrong" comparison in the demo. It is deliberately dumb.
 
 Both return the same Review contract, so the API/UI don't care which ran.
+Retry policy is split in two: `num_retries` (transport, handled by LiteLLM)
+covers connection resets and 5xx; `max_output_retries` (in this file) covers
+the specific case where the provider replied but the JSON didn't validate
+against the rubric schema.
+
+Never uses LiteLLM's `fallbacks=` — attribution matters more than availability
+for a scoring product, and cross-model quality drift is a bigger risk than
+one-off provider outages.
 """
 from __future__ import annotations
 
@@ -18,6 +30,8 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
+                     JudgeUnavailable, TranscriptRejected)
 from .rubric import RUBRIC_VERSION, SYSTEM, build_user_prompt
 from .schema import (Correctness, Level3, Resolution, Review, RiskFlag, RiskFlagType,
                      SentimentPoint, SignalResult, Transcript)
@@ -27,10 +41,9 @@ _SIGNAL_KEYS = ("resolution", "correctness", "customer_effort", "interaction_qua
 
 
 def _normalize_level(s: str) -> str:
-    """Heal the shallow typography variants the LLM occasionally emits
-    ('Resolved.', 'CONTRADICTED', ' resolved ') so the retry loop only fires
-    on actually-invalid levels ('very high', 'ok', 'kinda'). We strip
-    surrounding whitespace, drop trailing punctuation, and lowercase."""
+    """Heal shallow typography variants ('Resolved.', 'CONTRADICTED', ' resolved ').
+    Truly invalid levels ('very high', 'ok') still raise ValidationError, which
+    is how the output-retry loop is triggered."""
     return s.strip().rstrip(".!?,;:").strip().lower()
 
 
@@ -46,17 +59,14 @@ def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
     happen here that are strictly out of scope for the schema itself, because
     they depend on the Transcript (which the Review model has no handle on):
 
-    - Normalize level strings ("Resolved." -> "resolved"). Truly invalid levels
-      like "very high" fall through and raise ValidationError, which is how the
-      Anthropic judge's retry loop gets triggered.
+    - Normalize level strings so shallow typography ("Resolved.") heals.
     - Force correctness to `unverifiable` when there is no reference.
-    - Strip turn citations that don't correspond to a real turn, and
-      sentiment points that don't correspond to a CUSTOMER turn. Anything
-      dropped is recorded in Review.warnings.
+    - Strip turn citations that don't correspond to a real turn, and sentiment
+      points that don't correspond to a CUSTOMER turn. Anything dropped is
+      recorded in Review.warnings.
 
-    All other derivations (risk_flag dedupe, sentiment_delta,
-    needs_human_review, trajectory sort) live on Review itself."""
-    raw = copy.deepcopy(raw)  # we mutate nested dicts (turns lists) below
+    All other derivations live on Review's model validator."""
+    raw = copy.deepcopy(raw)
     raw["transcript_id"] = t.id
     raw["source"] = t.source
     raw["intent"] = t.intent
@@ -122,40 +132,80 @@ def _extract_json(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
-# ------------------------------------------------------------- Anthropic ----
+# ------------------------------------------------------------- LLM (LiteLLM) ----
 
-class AnthropicJudge:
-    def __init__(self, model: str | None = None, max_retries: int = 2):
-        import anthropic  # local import so the heuristic path has no dependency
-        self.client = anthropic.Anthropic()
+def _classify_litellm_error(exc: Exception, attempts: int) -> JudgeError:
+    """Map a litellm exception onto the JudgeError taxonomy. Uses class-name
+    tuples via getattr so a missing class in a future litellm version doesn't
+    crash on import; unclassified errors fall through as JudgeUnavailable
+    (retryable) — the safer default for a "we're not sure" case."""
+    import litellm
+    name = type(exc).__name__
+
+    def _cls(*names):
+        return tuple(c for n in names if (c := getattr(litellm, n, None)) is not None)
+
+    if _cls("AuthenticationError", "PermissionDeniedError", "NotFoundError") \
+            and isinstance(exc, _cls("AuthenticationError", "PermissionDeniedError", "NotFoundError")):
+        return JudgeRejected(f"{name}: {exc}", attempts=attempts)
+    if _cls("BadRequestError", "UnprocessableEntityError", "ContentPolicyViolationError") \
+            and isinstance(exc, _cls("BadRequestError", "UnprocessableEntityError", "ContentPolicyViolationError")):
+        return TranscriptRejected(f"{name}: {exc}", attempts=attempts)
+    return JudgeUnavailable(f"{name}: {exc}", attempts=attempts)
+
+
+class LLMJudge:
+    """LiteLLM-backed LLM judge. One provider call per transcript with
+    temperature=0. On invalid JSON, retries `max_output_retries` more times
+    with the previous output attached so the model can self-correct. Never
+    uses litellm's `fallbacks=` — see module docstring."""
+
+    def __init__(self, model: str | None = None, max_output_retries: int = 2):
         self.model = model or os.environ.get("CQR_MODEL", "claude-sonnet-4-5")
-        self.max_retries = max_retries
-        self.name = f"anthropic:{self.model}"
+        self.max_output_retries = max_output_retries
+        self.name = f"llm:{self.model}"
 
     def judge(self, t: Transcript) -> Review:
+        import litellm
         prompt = build_user_prompt(t.render(), t.reference, t.intent)
         last_err: Exception | None = None
-        for attempt in range(self.max_retries + 1):
-            msg = self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
-                system=SYSTEM,
-                messages=[{"role": "user", "content": prompt}],
-                extra_body={"temperature": 0},
-            )
-            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        for attempt in range(self.max_output_retries + 1):
+            try:
+                msg = litellm.completion(
+                    model=self.model,
+                    max_tokens=2000,
+                    temperature=0,
+                    timeout=float(os.environ.get("CQR_LLM_TIMEOUT_S", "60")),
+                    num_retries=int(os.environ.get("CQR_LLM_RETRIES", "2")),
+                    api_base=os.environ.get("CQR_LLM_BASE_URL") or None,
+                    messages=[
+                        {"role": "system", "content": SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                )
+            except Exception as exc:
+                raise _classify_litellm_error(exc, attempts=attempt + 1) from exc
+
+            text = msg.choices[0].message.content or ""
             try:
                 return _finalize(t, _extract_json(text), self.name)
             except (json.JSONDecodeError, ValidationError, ValueError) as e:
                 last_err = e
-                prompt = prompt + f"\n\nYour previous output was invalid ({type(e).__name__}: {str(e)[:300]}). Return ONLY valid JSON matching the schema."
-        raise RuntimeError(f"judge failed after retries for {t.id}: {last_err}")
+                prompt = prompt + (
+                    f"\n\nYour previous output was invalid "
+                    f"({type(e).__name__}: {str(e)[:300]}). "
+                    "Return ONLY valid JSON matching the schema."
+                )
+        raise JudgeOutputInvalid(
+            f"invalid JSON after {self.max_output_retries} output retries: {last_err}",
+            attempts=self.max_output_retries + 1,
+        )
 
 
 # ------------------------------------------------------------- Heuristic ----
 
 _NEG = re.compile(r"\b(ridiculous|joke|useless|unbelievable|terrible|worst|angry|furious|unacceptable|frustrat|waste|never again|ten days|twelve days)\b|!{2,}", re.I)
-_SHOUT = re.compile(r"\b[A-Z]{4,}\b")  # case-sensitive on purpose
+_SHOUT = re.compile(r"\b[A-Z]{4,}\b")
 _POS = re.compile(r"\b(thank|thanks|great|perfect|helpful|awesome|appreciate|works now|easy)\b", re.I)
 _CHURN = re.compile(r"\b(cancel(l)?(ing)?\b|switch(ing)? to|going to (amazon|zappos|a competitor)|never (buy|order|shop)|take my business)\b", re.I)
 _SOCIAL = re.compile(r"\b(twitter|x\.com|reddit|yelp|review|post(ing)? this|social media|press)\b", re.I)
@@ -196,7 +246,6 @@ class HeuristicJudge:
             if hits:
                 flag(kind, sev, f"keyword match: {pat.pattern[:40]}...", hits)
 
-        # resolution
         if _RESOLVED.search(all_a) and not re.search(r"useless|unbelievable", all_c, re.I):
             res = Resolution.resolved
         elif _DEFERRED.search(all_a):
@@ -205,14 +254,12 @@ class HeuristicJudge:
             res = Resolution.unresolved
         res_turns = [x.idx for x in agent if _RESOLVED.search(x.text) or _DEFERRED.search(x.text)]
 
-        # effort: count repeats / transfer / "as I told"
         effort_hits = []
         if re.search(r"transferr?ing|this is the .* team", all_a, re.I): effort_hits.append("transfer")
         if re.search(r"as i (told|said)|already (gave|said|told)|i gave .* already", all_c, re.I): effort_hits.append("re-explained")
         if len(cust) > 6: effort_hits.append("long")
         effort = Level3.high if len(effort_hits) >= 2 else Level3.medium if effort_hits else Level3.low
 
-        # interaction quality
         q_score = 0
         if _ACK.search(all_a): q_score += 1
         if _OWNERSHIP.search(all_a): q_score += 1
@@ -240,9 +287,17 @@ class HeuristicJudge:
 
 
 def get_judge(name: str | None = None) -> Judge:
-    name = name or os.environ.get("CQR_JUDGE") or ("anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "heuristic")
-    if name == "anthropic":
-        return AnthropicJudge()
+    """Resolve the concrete judge. Priority: explicit arg > `CQR_JUDGE` env >
+    llm if `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`CQR_LLM_BASE_URL` is set,
+    else heuristic. `anthropic` is accepted as a back-compat alias for `llm`."""
+    name = name or os.environ.get("CQR_JUDGE") or (
+        "llm" if (os.environ.get("ANTHROPIC_API_KEY")
+                  or os.environ.get("OPENAI_API_KEY")
+                  or os.environ.get("CQR_LLM_BASE_URL"))
+        else "heuristic"
+    )
+    if name in ("llm", "anthropic"):
+        return LLMJudge()
     if name == "heuristic":
         return HeuristicJudge()
     raise ValueError(f"unknown judge {name}")

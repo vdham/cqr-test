@@ -14,6 +14,7 @@ Exit codes:
   0 = all reviewed successfully
   1 = at least one per-transcript failure
   2 = an input file / dir doesn't exist
+  3 = JudgeRejected (bad key, wrong model, permission denied) — stop immediately
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable, Optional
 
+from .errors import JudgeRejected
 from .judge import get_judge
 from .loader import load_abcd, load_jsonl
 from .schema import Review, Transcript, sort_key
@@ -102,6 +104,13 @@ def cmd_review(args) -> int:
     errors = 0
     t0 = time.time()
     for i, (t, r, err) in enumerate(_run_all(judge, ts, args.concurrency), 1):
+        if isinstance(err, JudgeRejected):
+            # Config-scope failure (bad key etc.): further items would fail
+            # identically. Bail out immediately with a dedicated exit code.
+            store.flush()
+            print(f"x {t.id}: JudgeRejected: {err}", file=sys.stderr)
+            print("stopping: judge rejected the request (config-scope). Fix credentials or model and retry.", file=sys.stderr)
+            sys.exit(3)
         if err is not None:
             errors += 1
             print(f"x {t.id}: {type(err).__name__}: {err}", file=sys.stderr)
@@ -152,8 +161,8 @@ def main(argv=None) -> int:
     r.add_argument("--offset", type=int, default=0)
     r.add_argument("--synthetic", help="path to synthetic.jsonl")
     r.add_argument("--jsonl", help="any JSONL of Transcript objects")
-    r.add_argument("--judge", choices=["anthropic", "heuristic"], default=None,
-                   help="default: anthropic if ANTHROPIC_API_KEY set, else heuristic")
+    r.add_argument("--judge", choices=["llm", "heuristic", "anthropic"], default=None,
+                   help="default: llm if ANTHROPIC/OPENAI key or CQR_LLM_BASE_URL is set, else heuristic. 'anthropic' is a back-compat alias for 'llm'.")
     r.add_argument("--out", default="out/reviews.json",
                    help="review store; merges by transcript id across runs")
     r.add_argument("--fresh", action="store_true",

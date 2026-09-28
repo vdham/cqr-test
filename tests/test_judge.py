@@ -1,13 +1,16 @@
-"""Judge internals: _finalize, _extract_json, HeuristicJudge, AnthropicJudge, get_judge."""
+"""Judge internals: _finalize, _extract_json, HeuristicJudge, LLMJudge, get_judge."""
 from __future__ import annotations
 
 import json
 
 import pytest
 
-from cqr.judge import AnthropicJudge, HeuristicJudge, _extract_json, _finalize, get_judge
+from cqr.errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
+                        JudgeUnavailable, TranscriptRejected)
+from cqr.judge import (HeuristicJudge, LLMJudge, _classify_litellm_error,
+                       _extract_json, _finalize, get_judge)
 from cqr.schema import Correctness, Level3, Resolution, RiskFlagType, Transcript, Turn
-from tests.conftest import mock_anthropic_client, valid_review_json
+from tests.conftest import valid_review_json
 
 
 # ------------------------------------------------------------ _extract_json ----
@@ -296,55 +299,208 @@ class TestHeuristicJudge:
         assert r.summary.startswith("[heuristic]")
 
 
-# ------------------------------------------------------------ AnthropicJudge ----
+# --------------------------------------------------------------- LLMJudge ----
 
-class TestAnthropicJudge:
-    def _judge_with_responses(self, sample_transcript, responses):
-        j = AnthropicJudge(model="test-model", max_retries=2)
-        client, calls = mock_anthropic_client(responses)
-        j.client = client
-        return j, client, calls
+from types import SimpleNamespace
+
+
+def _make_litellm_exc(cls_name: str):
+    """Instantiate a litellm exception for tests. Constructor signatures vary
+    between subclasses (some want a real httpx.Response); we skip __init__
+    entirely and inject the attributes that different litellm __str__ methods
+    read from, so isinstance checks and str(exc) both work regardless."""
+    import litellm
+    cls = getattr(litellm, cls_name)
+    exc = cls.__new__(cls)
+    exc.message = f"synthetic {cls_name} for tests"
+    for attr in ("num_retries", "max_retries", "llm_provider", "model",
+                 "litellm_debug_info", "body", "detail", "response"):
+        if not hasattr(exc, attr):
+            setattr(exc, attr, None)
+    return exc
+
+
+def _mock_litellm_completion(responses):
+    """Build a fake `litellm.completion` that returns pre-canned response
+    strings in order. Each entry can be either a plain string (the model's
+    text output) or an Exception instance (which is raised)."""
+    calls: list[dict] = []
+
+    def completion(**kwargs):
+        calls.append(kwargs)
+        item = responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return SimpleNamespace(choices=[
+            SimpleNamespace(message=SimpleNamespace(content=item)),
+        ])
+
+    return completion, calls
+
+
+class TestLLMJudge:
+    def _install_mock(self, monkeypatch, responses):
+        completion, calls = _mock_litellm_completion(responses)
+        import litellm
+        monkeypatch.setattr(litellm, "completion", completion)
+        return calls
 
     def test_name_uses_model(self):
-        j = AnthropicJudge(model="foo-bar")
-        assert j.name == "anthropic:foo-bar"
+        j = LLMJudge(model="my-model")
+        assert j.name == "llm:my-model"
 
     def test_model_from_env(self, monkeypatch):
         monkeypatch.setenv("CQR_MODEL", "claude-from-env")
-        j = AnthropicJudge()
+        j = LLMJudge()
         assert j.model == "claude-from-env"
 
-    def test_happy_path_first_try(self, sample_transcript):
-        j, client, calls = self._judge_with_responses(sample_transcript, [valid_review_json()])
+    def test_happy_path_first_try(self, sample_transcript, monkeypatch):
+        calls = self._install_mock(monkeypatch, [valid_review_json()])
+        j = LLMJudge(model="test-model")
         r = j.judge(sample_transcript)
         assert len(calls) == 1
-        assert r.judge == "anthropic:test-model"
-        assert r.transcript_id == sample_transcript.id
-        assert calls[0]["extra_body"] == {"temperature": 0}
+        assert r.judge == "llm:test-model"
+        assert calls[0]["temperature"] == 0
+        assert calls[0]["model"] == "test-model"
+        # No fallbacks kwarg is EVER sent — attribution matters.
+        assert "fallbacks" not in calls[0]
 
-    def test_retries_on_malformed_json(self, sample_transcript):
-        j, client, calls = self._judge_with_responses(sample_transcript,
-                                                     ["not json at all", valid_review_json()])
+    def test_api_base_from_env(self, sample_transcript, monkeypatch):
+        monkeypatch.setenv("CQR_LLM_BASE_URL", "https://gateway.example.com")
+        self._install_mock(monkeypatch, [valid_review_json()])
+        j = LLMJudge(model="test-model")
         r = j.judge(sample_transcript)
+        # Verify api_base was passed through.
+        import litellm
+        # Re-invoke via patched completion and inspect via a fresh mock:
+        calls = self._install_mock(monkeypatch, [valid_review_json()])
+        LLMJudge(model="test-model").judge(sample_transcript)
+        assert calls[0]["api_base"] == "https://gateway.example.com"
+
+    def test_output_retry_on_invalid_json(self, sample_transcript, monkeypatch):
+        calls = self._install_mock(monkeypatch, ["not json at all", valid_review_json()])
+        r = LLMJudge(model="test-model").judge(sample_transcript)
+        assert len(calls) == 2
+        assert "invalid" in calls[1]["messages"][-1]["content"].lower()
+        assert r.transcript_id == sample_transcript.id
+
+    def test_output_retry_on_validation_error(self, sample_transcript, monkeypatch):
+        calls = self._install_mock(monkeypatch, ['{"risk_flags": []}', valid_review_json()])
+        r = LLMJudge(model="test-model").judge(sample_transcript)
         assert len(calls) == 2
         assert r.transcript_id == sample_transcript.id
-        # Second-attempt prompt was extended with error context.
-        assert "invalid" in calls[1]["messages"][0]["content"].lower()
 
-    def test_retries_on_validation_error(self, sample_transcript):
-        # Missing required signal fields -> ValidationError, then valid.
-        j, client, calls = self._judge_with_responses(sample_transcript,
-                                                     ['{"risk_flags": []}', valid_review_json()])
-        r = j.judge(sample_transcript)
-        assert len(calls) == 2
-        assert r.transcript_id == sample_transcript.id
+    def test_gives_up_after_output_retries(self, sample_transcript, monkeypatch):
+        calls = self._install_mock(monkeypatch, ["bad", "worse", "worst"])
+        with pytest.raises(JudgeOutputInvalid) as exc:
+            LLMJudge(model="test-model", max_output_retries=2).judge(sample_transcript)
+        assert len(calls) == 3
+        assert exc.value.attempts == 3
+        assert exc.value.retryable is False
+        assert exc.value.http_status == 500
 
-    def test_gives_up_after_max_retries(self, sample_transcript):
-        j, client, calls = self._judge_with_responses(sample_transcript,
-                                                     ["bad", "worse", "worst"])
-        with pytest.raises(RuntimeError, match="judge failed after retries"):
-            j.judge(sample_transcript)
-        assert len(calls) == 3  # 1 initial + 2 retries
+    def test_temperature_zero_and_max_tokens_passed(self, sample_transcript, monkeypatch):
+        calls = self._install_mock(monkeypatch, [valid_review_json()])
+        LLMJudge(model="m").judge(sample_transcript)
+        assert calls[0]["temperature"] == 0
+        assert calls[0]["max_tokens"] == 2000
+
+    def test_num_retries_and_timeout_from_env(self, sample_transcript, monkeypatch):
+        monkeypatch.setenv("CQR_LLM_TIMEOUT_S", "45.5")
+        monkeypatch.setenv("CQR_LLM_RETRIES", "7")
+        calls = self._install_mock(monkeypatch, [valid_review_json()])
+        LLMJudge(model="m").judge(sample_transcript)
+        assert calls[0]["timeout"] == 45.5
+        assert calls[0]["num_retries"] == 7
+
+
+class TestClassifyLiteLLMError:
+    """Every provider-shaped exception maps to the right JudgeError subclass."""
+
+    def _make(self, cls_name: str):
+        """Construct a real litellm exception with the minimum required args.
+        Falls back to attribute injection for classes whose __init__ signatures
+        vary between litellm versions."""
+        return _make_litellm_exc(cls_name)
+
+    def test_auth_error_becomes_judge_rejected(self):
+        exc = self._make("AuthenticationError")
+        classified = _classify_litellm_error(exc, attempts=1)
+        assert isinstance(classified, JudgeRejected)
+        assert classified.http_status == 502
+        assert classified.scope == "config"
+        assert classified.retryable is False
+
+    def test_permission_denied_becomes_judge_rejected(self):
+        exc = self._make("PermissionDeniedError")
+        assert isinstance(_classify_litellm_error(exc, attempts=1), JudgeRejected)
+
+    def test_not_found_becomes_judge_rejected(self):
+        exc = self._make("NotFoundError")
+        assert isinstance(_classify_litellm_error(exc, attempts=1), JudgeRejected)
+
+    def test_bad_request_becomes_transcript_rejected(self):
+        exc = self._make("BadRequestError")
+        classified = _classify_litellm_error(exc, attempts=1)
+        assert isinstance(classified, TranscriptRejected)
+        assert classified.http_status == 422
+        assert classified.scope == "transcript"
+
+    def test_content_policy_becomes_transcript_rejected(self):
+        exc = self._make("ContentPolicyViolationError")
+        assert isinstance(_classify_litellm_error(exc, attempts=1), TranscriptRejected)
+
+    def test_rate_limit_becomes_judge_unavailable(self):
+        exc = self._make("RateLimitError")
+        classified = _classify_litellm_error(exc, attempts=1)
+        assert isinstance(classified, JudgeUnavailable)
+        assert classified.retryable is True
+        assert classified.http_status == 503
+
+    def test_timeout_becomes_judge_unavailable(self):
+        exc = self._make("Timeout")
+        assert isinstance(_classify_litellm_error(exc, attempts=1), JudgeUnavailable)
+
+    def test_api_connection_becomes_judge_unavailable(self):
+        exc = self._make("APIConnectionError")
+        assert isinstance(_classify_litellm_error(exc, attempts=1), JudgeUnavailable)
+
+    def test_internal_server_becomes_judge_unavailable(self):
+        exc = self._make("InternalServerError")
+        assert isinstance(_classify_litellm_error(exc, attempts=1), JudgeUnavailable)
+
+    def test_unknown_exception_defaults_to_judge_unavailable(self):
+        classified = _classify_litellm_error(RuntimeError("mystery"), attempts=2)
+        assert isinstance(classified, JudgeUnavailable)
+        assert classified.attempts == 2
+
+
+class TestLLMJudgeErrorPropagation:
+    """The judge raises the correct JudgeError subclass for each provider error."""
+
+    def _install(self, monkeypatch, exc):
+        import litellm
+        def _boom(**kwargs):
+            raise exc
+        monkeypatch.setattr(litellm, "completion", _boom)
+
+    def _make(self, cls_name: str):
+        return _make_litellm_exc(cls_name)
+
+    def test_auth_error_raises_judge_rejected(self, sample_transcript, monkeypatch):
+        self._install(monkeypatch, self._make("AuthenticationError"))
+        with pytest.raises(JudgeRejected):
+            LLMJudge(model="m").judge(sample_transcript)
+
+    def test_rate_limit_raises_judge_unavailable(self, sample_transcript, monkeypatch):
+        self._install(monkeypatch, self._make("RateLimitError"))
+        with pytest.raises(JudgeUnavailable):
+            LLMJudge(model="m").judge(sample_transcript)
+
+    def test_bad_request_raises_transcript_rejected(self, sample_transcript, monkeypatch):
+        self._install(monkeypatch, self._make("BadRequestError"))
+        with pytest.raises(TranscriptRejected):
+            LLMJudge(model="m").judge(sample_transcript)
 
 
 # ----------------------------------------------------------------- get_judge ----
@@ -361,13 +517,32 @@ class TestGetJudge:
     def test_default_heuristic_when_no_key(self, monkeypatch):
         monkeypatch.delenv("CQR_JUDGE", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("CQR_LLM_BASE_URL", raising=False)
         assert get_judge().name == "heuristic"
 
-    def test_default_anthropic_when_key_present(self, monkeypatch):
+    def test_default_llm_when_anthropic_key_present(self, monkeypatch):
         monkeypatch.delenv("CQR_JUDGE", raising=False)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-        # Just check the name; don't actually call the LLM.
-        assert get_judge().name.startswith("anthropic:")
+        assert get_judge().name.startswith("llm:")
+
+    def test_default_llm_when_openai_key_present(self, monkeypatch):
+        monkeypatch.delenv("CQR_JUDGE", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        assert get_judge().name.startswith("llm:")
+
+    def test_default_llm_when_base_url_set(self, monkeypatch):
+        monkeypatch.delenv("CQR_JUDGE", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("CQR_LLM_BASE_URL", "https://gateway.example.com")
+        assert get_judge().name.startswith("llm:")
+
+    def test_anthropic_alias_returns_llm(self, monkeypatch):
+        # Back-compat: old callers passing "anthropic" still get an LLMJudge.
+        j = get_judge("anthropic")
+        assert j.name.startswith("llm:")
 
     def test_unknown_judge_raises(self):
         with pytest.raises(ValueError, match="unknown judge"):

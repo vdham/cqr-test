@@ -21,8 +21,10 @@ Every signal returns `{level, rationale, turns}`. Derived fields (`needs_human_r
 git clone https://github.com/vdham/cqr-test && cd cqr-test
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=...        # omit to use the offline regex baseline judge
+export ANTHROPIC_API_KEY=...        # or OPENAI_API_KEY; omit to fall back to the offline heuristic
 ```
+
+The judge is LiteLLM-backed (`cqr/judge.py::LLMJudge`) so any provider LiteLLM speaks — Anthropic, OpenAI, Azure, an OpenAI-compatible gateway — works via one interface. Point `CQR_LLM_BASE_URL` at a gateway to override the endpoint.
 
 Data: `data/abcd/` holds ABCD's `abcd_sample.json` (3 convos), `guidelines.json`, `kb.json`. For more ABCD conversations drop `abcd_v1.1.json.gz` from https://github.com/asappresearch/abcd into `data/abcd/` and the loader picks it up. `data/synthetic.jsonl` has nine deliberately problematic transcripts (regenerate with `python scripts/make_synthetic.py data/abcd`).
 
@@ -47,15 +49,49 @@ python scripts/eval_synthetic.py
 uvicorn cqr.api:app --reload      # dashboard http://127.0.0.1:8000/  ·  Swagger UI http://127.0.0.1:8000/docs (prefilled example bodies)
 ```
 
+### Batch flow (accept-then-poll)
+
+`POST /review/batch` is asynchronous: it returns 202 with a `job_id`, workers score transcripts concurrently, and callers poll `/jobs/{id}` (or hit the same endpoint with `?wait=true` to block up to `CQR_BATCH_WAIT_S`).
+
+```bash
+# 1. submit — 202 immediately
+JOB=$(curl -sX POST http://127.0.0.1:8000/review/batch \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: my-batch-2026-09-28-01' \
+  -d '{"transcripts": [{"id":"c1","source":"upload","turns":[{"idx":0,"speaker":"agent","text":"Hi"},{"idx":1,"speaker":"customer","text":"?"}]}]}' \
+  | jq -r .job_id)
+
+# 2. poll — job status + per-item errors
+curl -s http://127.0.0.1:8000/jobs/$JOB
+# 3. reviews it produced, riskiest first
+curl -s http://127.0.0.1:8000/jobs/$JOB/reviews
+```
+
+### Environment
+
+| Var | Default | Effect |
+|---|---|---|
+| `CQR_JUDGE` | (auto) | `llm` \| `heuristic`. `anthropic` accepted as back-compat alias for `llm`. If unset: `llm` when any of `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `CQR_LLM_BASE_URL` is set, else `heuristic`. |
+| `CQR_MODEL` | `claude-sonnet-4-5` | LiteLLM model string; anything LiteLLM speaks works (`gpt-4o`, `openrouter/...`, `azure/...`, etc.). |
+| `CQR_LLM_BASE_URL` | — | Pass through to `litellm.completion(api_base=...)`. Use to route through a gateway. |
+| `CQR_LLM_TIMEOUT_S` | `60` | Per-call timeout at the LiteLLM boundary. |
+| `CQR_LLM_RETRIES` | `2` | LiteLLM transport retries (connection resets, 5xx). Separate from output retries. |
+| `CQR_CONCURRENCY` | `4` | Number of workers in the async batch queue. |
+| `CQR_MAX_BATCH` | `200` | Cap on `transcripts[]` per `POST /review/batch`. Oversize → 422. |
+| `CQR_BATCH_WAIT_S` | `60` | Max seconds `POST /review/batch?wait=true` blocks before returning the current job snapshot. |
+| `CQR_CIRCUIT_THRESHOLD` | `5` | Consecutive retryable failures on one job before remaining items short-circuit as `CircuitOpen`. |
+| `CQR_MAX_JOBS_KEPT` | `100` | LRU cap on the in-memory job table. |
+| `CQR_STORE` | `out/reviews.json` | Path to the JSON store. |
+
 ## Tests
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                          # 126 tests, ~1s, no network
-coverage run --source=cqr -m pytest && coverage report   # 100% line coverage
+pytest                          # 292 tests, ~4s, no network
+coverage run --source=cqr -m pytest && coverage report   # 100% line coverage across cqr/*
 ```
 
-Tests are pure-Python and hermetic: the Anthropic client is stubbed, the store uses `tmp_path`, and the FastAPI endpoints run through `TestClient` against a `HeuristicJudge`. `scripts/eval_synthetic.py` is separate — it scores stored reviews against `metadata.expect`, offline (no model call). Run `python -m cqr.cli review --synthetic data/synthetic.jsonl ...` first.
+Tests are pure-Python and hermetic: `litellm.completion` is monkeypatched, the store uses `tmp_path`, and the FastAPI endpoints run through `TestClient` against a `HeuristicJudge`. `scripts/eval_synthetic.py` is separate — it scores stored reviews against `metadata.expect`, offline (no model call). Run `python -m cqr.cli review --synthetic data/synthetic.jsonl ...` first.
 
 Synthetic-set eval scores (nine hand-labeled conversations, 22 anchored checks):
 
@@ -116,7 +152,12 @@ review.model_dump()
 }
 ```
 
-Other endpoints: `POST /review/batch` `{transcripts: [...]}`, `GET /reviews?needs_human_review=true`, `GET /reviews/{id}` (transcript + review).
+Other endpoints:
+- `POST /review/batch` `{transcripts: [...]}` — accepts up to `CQR_MAX_BATCH`, returns 202 with `{job_id, status, total}`. Use `?wait=true` to block up to `CQR_BATCH_WAIT_S` and get the completed `Job` back. `Idempotency-Key` header dedupes replays. See the accept-then-poll example under Run.
+- `GET /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/reviews` — job state, per-item errors, and the resulting reviews (riskiest first).
+- `GET /reviews?needs_human_review=&source=&job_id=` — filter the persisted set.
+- `GET /reviews/{id}` — transcript + review pair.
+- `GET /health` — liveness (no provider call). Reports which judge is live and, for LLM, which model.
 
 ### Invariants
 
@@ -130,11 +171,20 @@ Any `Review` — however it was constructed (judge output, API request, test fix
 
 Callers should never compute the derived fields themselves — supplied values are overwritten.
 
-### Error behavior
+### Error contract
 
-The Anthropic judge validates its own output against `Review` and retries up to twice on malformed JSON before raising `RuntimeError`. `POST /review/batch` collects per-transcript failures into an `errors` array rather than aborting the batch, so partial success is the norm; `reviews` and `errors` are both returned. `POST /review` (single) surfaces the error as a 500 with the exception type and message.
+Judge failures are classified into four typed subclasses of `JudgeError` (`cqr/errors.py`). The API's exception handler maps each to an HTTP response `{error_type, message, retryable, attempts}`; 5xx-retryable responses carry `Retry-After: 30`.
 
-`POST /review` is **idempotent by `id`**: reposting the same transcript id replaces both the stored transcript and its review. `POST /review/batch` is synchronous and processes transcripts serially in the request thread — fine for a demo, but tens of transcripts at anthropic-judge latency will time out at any real HTTP layer. A later change replaces it with an async batch queue.
+| Class | HTTP | Scope | Retryable | Meaning |
+|---|---|---|---|---|
+| `JudgeUnavailable` | 503 | transcript | ✓ | Transient upstream failure (timeout, rate limit, connection drop, provider 5xx). Same input has a real chance of working later. |
+| `JudgeRejected` | 502 | **config** | ✗ | Bad key, wrong model, permission denied. Every remaining item in the same batch would fail identically → the JobRunner aborts the whole job; the CLI exits 3. |
+| `TranscriptRejected` | 422 | transcript | ✗ | Provider accepted the request but rejected this specific transcript (too long, content policy). One-item quarantine — other batch items proceed. |
+| `JudgeOutputInvalid` | 500 | transcript | ✗ | Provider replied, but the JSON didn't validate against `Review` even after output retries. |
+
+`POST /review` is **idempotent by `id`**: reposting the same transcript id replaces both the stored transcript and its review.
+
+`POST /review/batch` is async (accept-then-poll) with an in-process bounded queue and per-job latched circuit breaker. Per-item failures land in `Job.errors` with the classified `error_type`, `retryable`, and `attempts` fields; the batch keeps running unless a `JudgeRejected` flips the whole job to `failed`.
 
 ### What's stable
 
@@ -143,9 +193,11 @@ The `Transcript` and `Review` schemas are the public contract. Judge implementat
 ## Layout
 
 ```
-cqr/schema.py      the contract (Transcript in, Review out)
+cqr/schema.py      the contract (Transcript in, Review out) + Job / JobStatus / JobError / BatchAccepted
 cqr/rubric.py      the anchored rubric — this is the product
-cqr/judge.py       AnthropicJudge (LLM) and HeuristicJudge (regex baseline); both emit Review
+cqr/errors.py      the JudgeError taxonomy (Unavailable / Rejected / TranscriptRejected / OutputInvalid)
+cqr/judge.py       LLMJudge (LiteLLM) and HeuristicJudge (regex baseline); both emit Review
+cqr/jobs.py        in-process bounded queue: JobRunner, workers, circuit breaker, idempotency
 cqr/loader.py      ABCD + JSONL ingest; maps ABCD intents to guideline text for correctness
 cqr/cli.py         batch runner
 cqr/api.py         FastAPI endpoints + dashboard

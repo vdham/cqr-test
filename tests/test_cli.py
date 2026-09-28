@@ -95,6 +95,25 @@ class TestReviewCommand:
                       "--judge", "heuristic", "--out", str(tmp_path / "r.json")])
         assert exc.value.code == 2
 
+    def test_judge_rejected_exits_3(self, tmp_path, sample_transcript,
+                                    capsys, monkeypatch):
+        """Config-scope failure aborts immediately — no retry, exit 3."""
+        from cqr.errors import JudgeRejected
+        from cqr.judge import HeuristicJudge
+        def boom(self, t):
+            raise JudgeRejected("bad key", attempts=1)
+        monkeypatch.setattr(HeuristicJudge, "judge", boom)
+        jsonl = tmp_path / "syn.jsonl"
+        out = tmp_path / "reviews.json"
+        dump_jsonl([sample_transcript], jsonl)
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["review", "--synthetic", str(jsonl), "--judge", "heuristic",
+                      "--out", str(out)])
+        assert exc.value.code == 3
+        err = capsys.readouterr().err
+        assert "JudgeRejected" in err
+        assert "stopping" in err.lower()
+
     def test_malformed_jsonl_lines_skipped(self, tmp_path, sample_transcript, capsys):
         jsonl = tmp_path / "mixed.jsonl"
         jsonl.write_text(

@@ -44,6 +44,17 @@ class _AlwaysFailJudge:
         raise RuntimeError("always fails")
 
 
+class _JudgeErrorJudge:
+    """Judge that raises a specific JudgeError subclass every call."""
+    name = "judge-error-emitter"
+    def __init__(self, exc_cls, attempts=1):
+        self._cls = exc_cls
+        self._attempts = attempts
+
+    def judge(self, t):
+        raise self._cls(f"planned {self._cls.__name__}", attempts=self._attempts)
+
+
 @pytest.fixture
 def runner(tmp_path):
     """Runner factory for tests. Caller starts/stops in async body."""
@@ -179,6 +190,82 @@ class TestEviction:
             # Same key should now create a new job, not return the evicted one.
             j3 = r.submit([_t("x")], idempotency_key="cleanme")
             assert j3.id != j1.id
+        finally:
+            await r.stop()
+
+
+class TestJudgeErrorHandling:
+    """Part 2: classified failures should shape the job outcome differently.
+    Config-scope aborts the whole job; transcript-scope terminal errors are
+    recorded per-item without counting against the circuit; retryable
+    failures count normally toward the circuit threshold."""
+
+    @pytest.mark.asyncio
+    async def test_config_scope_error_aborts_job(self, runner):
+        from cqr.errors import JudgeRejected
+        r = runner(lambda: _JudgeErrorJudge(JudgeRejected, attempts=1), concurrency=1)
+        await r.start()
+        try:
+            job = r.submit([_t(f"j{i}") for i in range(4)])
+            final = await wait_for_job(r, job.id, timeout_s=2.0)
+            assert final.status == JobStatus.failed
+            # After the first item flips the job, the remaining three drain
+            # without hitting the judge; total completed still equals total.
+            assert final.completed == 4
+            # Only the first item logged a JudgeRejected — the rest are
+            # silently drained (job.status == failed short-circuit).
+            rejected_errors = [e for e in final.errors if e.error_type == "JudgeRejected"]
+            assert len(rejected_errors) == 1
+            assert rejected_errors[0].retryable is False
+        finally:
+            await r.stop()
+
+    @pytest.mark.asyncio
+    async def test_transcript_terminal_error_not_counted_in_circuit(self, runner):
+        """TranscriptRejected is per-item and non-retryable: the item fails
+        but the circuit doesn't open, so remaining items still get judged."""
+        from cqr.errors import TranscriptRejected
+
+        class _Mixed:
+            name = "mixed"
+            def __init__(self):
+                self.calls = 0
+                self._h = HeuristicJudge()
+            def judge(self, t):
+                self.calls += 1
+                # First 6 items are rejected transcripts; the 7th succeeds.
+                # A retryable circuit at threshold=3 would open after 3;
+                # since these are terminal-not-retryable, it should NOT open.
+                if self.calls <= 6:
+                    raise TranscriptRejected(f"reject #{self.calls}", attempts=1)
+                return self._h.judge(t)
+
+        judge = _Mixed()
+        r = runner(lambda: judge, concurrency=1, circuit_threshold=3)
+        await r.start()
+        try:
+            job = r.submit([_t(f"m{i}") for i in range(7)])
+            final = await wait_for_job(r, job.id, timeout_s=2.0)
+            assert final.status == JobStatus.completed
+            # 6 TranscriptRejected + 0 CircuitOpen + 1 success -> 6 errors total.
+            assert len(final.errors) == 6
+            assert all(e.error_type == "TranscriptRejected" for e in final.errors)
+            assert all(e.retryable is False for e in final.errors)
+        finally:
+            await r.stop()
+
+    @pytest.mark.asyncio
+    async def test_retryable_judge_error_counts_toward_circuit(self, runner):
+        from cqr.errors import JudgeUnavailable
+        r = runner(lambda: _JudgeErrorJudge(JudgeUnavailable), concurrency=1, circuit_threshold=2)
+        await r.start()
+        try:
+            job = r.submit([_t(f"u{i}") for i in range(5)])
+            final = await wait_for_job(r, job.id, timeout_s=2.0)
+            assert final.status == JobStatus.completed
+            types = [e.error_type for e in final.errors]
+            assert types.count("JudgeUnavailable") == 2  # 2 real attempts before open
+            assert types.count("CircuitOpen") == 3       # remaining short-circuit
         finally:
             await r.stop()
 
