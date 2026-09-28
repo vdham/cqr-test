@@ -228,20 +228,29 @@ class TestLazyJudgeInit:
         assert api.judge() is first
 
 
-class TestRunnerNotStarted:
-    """Cover the guards that fire before/without lifespan starting the runner.
-    The API stays inside its declared status matrix: batch submits 429
-    (queue unavailable), GET /jobs returns an empty list, GETs on specific
-    ids 404 as if they were LRU-evicted."""
+class TestRunnerLazyStart:
+    """Without lifespan (no `with` on the client), the runner is None. GETs
+    treat that as "nothing here yet" (empty list / 404), and the first
+    POST /review/batch lazy-starts the runner instead of erroring — batch
+    submission is on the golden path and shouldn't have a startup race."""
 
-    def test_endpoints_stay_in_matrix(self, monkeypatch):
+    def test_get_endpoints_return_nothing_when_runner_absent(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(api, "_store", Store(tmp_path / "reviews.json"))
         monkeypatch.setattr(api, "_runner", None)
         c = TestClient(api.app)  # no `with`, no lifespan
-        assert c.post("/review/batch", json={"transcripts": [_transcript_body("x")]}).status_code == 429
         assert c.get("/jobs").status_code == 200
         assert c.get("/jobs").json() == []
         assert c.get("/jobs/anything").status_code == 404
         assert c.get("/jobs/anything/reviews").status_code == 404
+
+    def test_batch_lazy_starts_the_runner(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(api, "_store", Store(tmp_path / "reviews.json"))
+        monkeypatch.setenv("CQR_JUDGE", "heuristic")
+        monkeypatch.setattr(api, "_runner", None)
+        c = TestClient(api.app)  # no `with`, no lifespan
+        r = c.post("/review/batch", json={"transcripts": [_transcript_body("lazy-1")]})
+        assert r.status_code == 202
+        assert api._runner is not None  # side-effect: runner is now up
 
 
 class TestHealth:

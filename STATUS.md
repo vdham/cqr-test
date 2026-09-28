@@ -5,24 +5,31 @@ _Last updated: 2026-09-28 — by: Vikram_
 | Spec | Goal | State | Next task |
 |---|---|---|---|
 | [001-fixes](specs/001-fixes/tasks.md) | Close the review findings: contract enforcement, guideline lookup, rubric, docs | **done** (`b7c8d5e`..`daee7b3`) | — |
-| [002-batch-litellm](specs/002-batch-litellm/tasks.md) | Async batch jobs with bounded queue; LiteLLM judge with classified errors | **done** | — |
+| [002-batch-litellm](specs/002-batch-litellm/tasks.md) | Async batch jobs with bounded queue; LiteLLM judge with classified errors; hardened error contract | **done** (`0773603`, `a94396a`, `2587866`) | — |
 
 ## Done this session
-- Follow-up on 002's contract: one `ErrorBody` shape for every non-2xx (except FastAPI's own 422), new `QueueFull`/`NotFoundError`/`PayloadTooLarge` classes, single `ERROR_RESPONSES` matrix in `cqr/api.py`, body-size middleware, `scripts/render_error_table.py` generating the README's `<!-- ERROR-TABLE-START -->` section, `tests/test_error_contract.py` with spec-parity + per-status drivers + drift-tracking ASGI middleware. 314 tests, 100% coverage. Ticked under 002 Docs.
-- Closed Part 2 of `specs/002-batch-litellm` (plus a follow-up `docs(api)` commit `b522ce0` that surfaces the JudgeError responses and 404s in the OpenAPI spec — retroactively tracked under Docs in `specs/002-batch-litellm/tasks.md`): `cqr/errors.py` (`JudgeError` taxonomy — `JudgeUnavailable`/`JudgeRejected`/`TranscriptRejected`/`JudgeOutputInvalid`), replaced `AnthropicJudge` with `LLMJudge` (LiteLLM, `fallbacks=` deliberately off, `_classify_litellm_error` maps every provider exception to a `JudgeError` subclass, separate transport vs output retries). Wired `JudgeError` exception handler and `GET /health` in `api.py`; the `JobRunner` now consumes `JudgeError.scope=="config"` to abort a job as `failed`, and only retryable failures count toward the circuit. CLI exits 3 on `JudgeRejected`. Requirements shift: `litellm>=1.50` in, `anthropic` dropped. Docs updated: README env table, error contract, accept-then-poll flow; TRADEOFFS queue/LLM paragraphs plus corners-cut and hardening lines. 292 hermetic tests, 100% coverage on `cqr/*`.
-- Part 1 also landed earlier in this session (`0773603`): `cqr/jobs.py` (`JobRunner`), `Job`/`JobStatus`/`JobError`/`BatchAccepted`, `Review.job_id`, `POST /review/batch` → 202+poll, `/jobs*` endpoints, `Idempotency-Key`, CLI `--concurrency` + exit codes + malformed-line tolerance, dashboard `job_id`.
+- Runner lazy-starts on first `POST /review/batch` if lifespan hasn't; the 429 branch is now for real `QueueFull` only. Matrix and tests updated.
+- README error table gains a **Client should check** column (via `scripts/render_error_table.py`); 422 rows spell out the body-shape branch.
+- Anthropic run refreshed on rubric 1.1 with the LiteLLM judge — `examples/reviews.anthropic.json` now has `"judge": "llm:claude-sonnet-4-5"`. Score unchanged: **22/22**.
+- `scripts/demo.sh` — one-shot demo (dashboard + interesting URLs + live batch through `/review/batch?wait=true`); works with no API key.
+- `tests/fixtures/batch3.json` seed for the demo batch.
+- README + TRADEOFFS interviewer read-through: test count refreshed to 315, JSON contract example updated to the current `judge`/`rubric_version`/`warnings` fields, env table adds `CQR_MAX_QUEUE_SIZE` and `CQR_MAX_BODY_BYTES`, layout section mentions demo.sh and the render script.
+- Fresh-clone verification (`3a`) — see the report at the bottom of this file.
 
 ## Next
-- No queued spec. Next candidate: **003 — hardening pass** (broker/Postgres queue + out-of-process workers, LiteLLM gateway policy, PII redaction with typed placeholders, ADRs for each). Draft `specs/003-hardening/spec.md + tasks.md + PROMPT.md` when starting.
+- No queued spec. Natural next candidate is a **003 — hardening pass** (broker + out-of-process workers, LiteLLM gateway policy, PII redaction with typed placeholders, ADRs for each). Draft `specs/003-hardening/{spec,tasks,PROMPT}.md` when starting.
 
 ## Blocked / open questions
 - None.
 
 ## Demo readiness
-- [x] `pytest` green (292 tests), coverage 100% on `cqr/*`
+- [x] `pytest` green (315 tests), coverage 100% on `cqr/*`
 - [x] Heuristic path runs end-to-end with no key (`python -m cqr.cli review --synthetic ... --judge heuristic`)
+- [x] `scripts/demo.sh` starts the API, prints URLs for `syn-06`/`syn-01`/`syn-05`, drives a batch through `POST /review/batch?wait=true`, all with no API key
 - [x] `POST /review/batch` returns 202 with a `job_id`; `GET /jobs/{id}` and `/jobs/{id}/reviews` return the async result
 - [x] `GET /health` reports which judge/model is live without touching the provider
 - [x] `JudgeError` handler returns typed HTTP responses with `Retry-After: 30` on 503
-- [x] Dashboard shows `syn-01` with `correctness=contradicted` on the committed Anthropic run (`CQR_STORE=examples/reviews.anthropic.json uvicorn cqr.api:app`)
+- [x] Every non-2xx serializes to `ErrorBody` (except FastAPI's own 422), and `tests/test_error_contract.py` pins the spec against the code
+- [x] Dashboard shows `syn-01` with `correctness=contradicted` on the committed LLM run (`CQR_STORE=examples/reviews.anthropic.json uvicorn cqr.api:app`)
 - [x] `TRADEOFFS.md` has no contradictions with the code
+- [x] Anthropic eval evidence in `examples/reviews.anthropic.json` (22/22, rubric 1.1, judge `llm:claude-sonnet-4-5`)

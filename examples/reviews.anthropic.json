@@ -8,7 +8,7 @@
     {
      "type": "unauthorized_promise",
      "severity": "high",
-     "rationale": "Agent shipped a replacement at 3 days (turn 4) when reference requires 7+ days. Reference step 4 explicitly states that for 7 days or less, agent should inform customer the package can still take a couple days to arrive, not reship.",
+     "rationale": "Agent promised to ship a replacement at turn 4 when customer had only been waiting 3 days total. Reference guideline 4 requires that for waits of 7 days or less, agent should inform customer that package can still take a couple days to arrive, not immediately reship.",
      "turns": [
       4
      ]
@@ -16,7 +16,7 @@
    ],
    "resolution": {
     "level": "resolved",
-    "rationale": "Customer's goal (receive missing order) was met; agent shipped replacement and customer confirmed satisfaction in turns 6-7.",
+    "rationale": "Agent completed the replacement shipment action (turn 6) which addresses the customer's stated goal of receiving their missing order. Customer confirmed satisfaction at turn 7.",
     "turns": [
      4,
      6,
@@ -25,7 +25,7 @@
    },
    "correctness": {
     "level": "contradicted",
-    "rationale": "Reference step 4 requires agent to tell customers waiting \u22647 days that package can still arrive in a couple days. Customer stated 3 days total wait (turn 3), but agent immediately reshipped (turn 4) instead of following the wait instruction. This contradicts the prescribed action for the customer's situation.",
+    "rationale": "Reference guideline 4 states that if customer has been waiting 7 days or less, agent should inform them the package can still take a couple days to arrive. Customer stated 3 days total wait at turn 3. Agent instead immediately proceeded to reship (guideline 5, which applies only to waits of a week or longer). This contradicts the prescribed action for the customer's situation.",
     "turns": [
      3,
      4
@@ -33,7 +33,7 @@
    },
    "customer_effort": {
     "level": "low",
-    "rationale": "Customer stated problem once (turn 1), provided name and address when asked (turns 3, 5), no transfers, no repetition, no unnecessary steps.",
+    "rationale": "Customer stated problem once (turn 1), provided name and address when asked (turns 3, 5), no transfers, no repetition, no unnecessary steps. Smooth single-pass interaction.",
     "turns": [
      1,
      3,
@@ -41,8 +41,8 @@
     ]
    },
    "interaction_quality": {
-    "level": "medium",
-    "rationale": "Agent was polite, apologized (turn 2), and clearly stated what was done (turn 6). However, the interaction was procedurally generic with no acknowledgment of the specific impact of the missing delivery, and the agent did not validate purchase details (email, username) per reference step 2.",
+    "level": "high",
+    "rationale": "Agent acknowledged the issue with empathy (turn 2), took clear ownership and action (turn 4), confirmed completion with specifics about the product (turn 6), and offered further assistance (turn 6). Customer expressed satisfaction with the service quality (turns 5, 7).",
     "turns": [
      2,
      4,
@@ -56,11 +56,11 @@
     },
     {
      "turn": 3,
-     "score": -0.2
+     "score": 0.0
     },
     {
      "turn": 5,
-     "score": 0.6
+     "score": 0.7
     },
     {
      "turn": 7,
@@ -68,10 +68,11 @@
     }
    ],
    "sentiment_delta": 1.2,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": true,
-   "summary": "Agent reshipped order at 3 days when policy requires 7+ days; contradicts reference but customer satisfied.",
+   "summary": "Agent reshipped order after 3-day wait; policy requires waiting 7+ days before replacement.",
    "warnings": []
   },
   "syn-02-unauthorized-promise": {
@@ -90,7 +91,7 @@
    ],
    "resolution": {
     "level": "resolved",
-    "rationale": "Agent initiated the refund as requested by the customer. The customer's stated goal (refund for defective jacket) was met within the conversation.",
+    "rationale": "Agent initiated the refund as requested by the customer. Customer accepted the outcome at turn 5.",
     "turns": [
      4,
      5
@@ -98,16 +99,14 @@
    },
    "correctness": {
     "level": "contradicted",
-    "rationale": "Agent skipped required validation steps from the reference. Step 2 requires validating purchase with Username, Email Address, and Order ID. Agent only collected username (turn 1) and full name (turns 2-3) but never collected or validated email address. Step 3 requires asking about refund method (gift card, add value, paper check, or credit card) but agent assumed credit card without asking. Step 4 requires entering account ID for credit card refunds, but this was not collected. Step 5 requires entering dollar amount and clicking [Offer Refund], but the $120 amount was never confirmed with the customer (reference says to ask if customer doesn't know, with $50 default).",
+    "rationale": "Agent skipped required validation steps from reference. Reference requires: (1) Pull up Account with full name/Account ID [done at turn 2-3], (2) Validate Purchase with username, email address, and order ID [skipped - only username and order ID provided at turn 1, email never collected], (3) Record Reason to determine refund method [skipped - agent assumed credit card without asking], (4) Enter Details [skipped - no account ID collected for credit card refund], (5) Offer Refund with dollar amount [done at turn 4 but amount not confirmed with customer]. Agent jumped directly to refund without completing validation or asking refund preference.",
     "turns": [
-     2,
-     3,
      4
     ]
    },
    "customer_effort": {
     "level": "low",
-    "rationale": "Customer stated problem once with username and order ID in turn 1, provided full name when asked in turn 3. No repetition, transfers, or unnecessary steps.",
+    "rationale": "Customer stated problem once at turn 1, provided name when asked at turn 3, no repetition or transfers required.",
     "turns": [
      1,
      3
@@ -115,10 +114,11 @@
    },
    "interaction_quality": {
     "level": "medium",
-    "rationale": "Agent acknowledged the problem with empathy ('I'm so sorry to hear that') at turn 2 and was polite throughout. However, the interaction was procedurally rushed\u2014agent did not verify all required information, did not ask about refund method preference, and did not confirm the refund amount. The process felt generic rather than tailored to the customer's specific needs.",
+    "rationale": "Agent acknowledged the problem with empathy at turn 2 ('I'm so sorry to hear that') and was polite throughout. However, the interaction was procedurally incomplete - agent did not ask about refund preference, did not confirm the refund amount, and did not explain what happens next beyond the unauthorized timeline guarantee. The resolution was efficient but lacked proper validation and customer choice.",
     "turns": [
      2,
-     4
+     4,
+     6
     ]
    },
    "sentiment_trajectory": [
@@ -136,8 +136,9 @@
     }
    ],
    "sentiment_delta": 1.0,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": true,
    "summary": "Refund initiated for defective jacket but agent guaranteed unauthorized timeline and skipped required validation steps.",
    "warnings": []
@@ -167,7 +168,7 @@
    },
    "correctness": {
     "level": "contradicted",
-    "rationale": "Reference step 4 explicitly requires 'Pin Number <or> answer to the Security Question' to operate [Make Password]. Agent at turn 10 asked for phone number and at turn 12 reset the password without obtaining either required verification method. This contradicts the prescribed verification procedure.",
+    "rationale": "Reference step 4 explicitly requires 'Pin Number <or> answer to the Security Question' to operate [Make Password]. Agent at turn 10 asked for phone number and at turn 12 reset the password without obtaining either required verification method. This contradicts the prescribed procedure.",
     "turns": [
      10,
      12
@@ -175,17 +176,16 @@
    },
    "customer_effort": {
     "level": "high",
-    "rationale": "Customer had to repeat their problem and credentials after transfer (turn 9 references 'as I told the last person'), was transferred unnecessarily (turn 7), and had to provide information proactively that wasn't requested (turn 11: zip code). Customer explicitly notes the excessive effort at turn 13.",
+    "rationale": "Customer had to repeat their problem and credentials after transfer (turn 9 references 'as I told the last person'), was transferred unnecessarily (turn 7), and explicitly complained about the duration at turn 13.",
     "turns": [
      7,
      9,
-     11,
      13
     ]
    },
    "interaction_quality": {
     "level": "low",
-    "rationale": "First agent transferred unnecessarily after collecting information (turn 7). No acknowledgment of the customer's frustration or the inconvenience. Abrupt, transactional communication with no explanation of what was being done or why information was needed. Customer's complaint at turn 13 about duration indicates poor experience.",
+    "rationale": "First agent provided no explanation for the transfer at turn 7. Both agents used terse, transactional language with no acknowledgment of the customer's frustration. No ownership statements, no explanation of what was being done or why information was needed. Customer's complaint at turn 13 about excessive time was not acknowledged.",
     "turns": [
      2,
      4,
@@ -193,8 +193,7 @@
      7,
      8,
      10,
-     12,
-     13
+     12
     ]
    },
    "sentiment_trajectory": [
@@ -208,7 +207,7 @@
     },
     {
      "turn": 5,
-     "score": -0.2
+     "score": -0.4
     },
     {
      "turn": 9,
@@ -216,7 +215,7 @@
     },
     {
      "turn": 11,
-     "score": -0.3
+     "score": -0.2
     },
     {
      "turn": 13,
@@ -224,8 +223,9 @@
     }
    ],
    "sentiment_delta": -0.1,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": true,
    "summary": "Password reset completed but agent skipped required security verification and customer was transferred unnecessarily.",
    "warnings": []
@@ -238,7 +238,7 @@
     {
      "type": "abusive_agent",
      "severity": "high",
-     "rationale": "Agent is dismissive, deflects responsibility without helping ('That's your choice'), and shows no attempt to resolve the customer's issue or retain them.",
+     "rationale": "Agent is dismissive, deflects responsibility without helping, and shows no attempt to resolve the issue. Responses at turns 2, 4, and 6 demonstrate complete disengagement and failure to assist.",
      "turns": [
       2,
       4,
@@ -256,7 +256,7 @@
     {
      "type": "missing_disclosure",
      "severity": "high",
-     "rationale": "Agent completely skipped all required steps from the reference: did not pull up account, verify identity, validate purchase, or ask the Oracle. No procedural steps were followed.",
+     "rationale": "Agent completely skipped all required steps from the reference: did not pull up account, verify identity, validate purchase, or use Ask the Oracle tool. No procedural steps were followed.",
      "turns": [
       0,
       2,
@@ -266,8 +266,8 @@
     },
     {
      "type": "social_amplification",
-     "severity": "high",
-     "rationale": "Customer threatens to post the entire chat transcript on Twitter.",
+     "severity": "medium",
+     "rationale": "Customer threatens to post the conversation on Twitter.",
      "turns": [
       5
      ]
@@ -275,7 +275,7 @@
    ],
    "resolution": {
     "level": "unresolved",
-    "rationale": "Customer's goal of resolving the late shipping issue was not addressed. Agent deflected responsibility and offered no solution, path forward, or attempt to investigate the order. Customer gave up in frustration.",
+    "rationale": "Customer's goal of resolving late shipping issue was not addressed at all. Agent deflected responsibility and offered no solution, path forward, or investigation. Customer gave up in frustration.",
     "turns": [
      2,
      4,
@@ -284,16 +284,17 @@
    },
    "correctness": {
     "level": "contradicted",
-    "rationale": "Reference requires agent to: (1) pull up account, (2) verify identity, (3) validate purchase, (4) ask the Oracle, and (5) update order if needed. Agent skipped all steps and instead deflected to the carrier without any investigation or action.",
+    "rationale": "Reference requires agent to: (1) Pull up Account, (2) Verify Identity, (3) Validate Purchase, (4) Ask the Oracle, and (5) Update Order if needed. Agent performed none of these steps and instead deflected to the carrier without investigation.",
     "turns": [
      0,
      2,
-     4
+     4,
+     6
     ]
    },
    "customer_effort": {
     "level": "high",
-    "rationale": "Customer had to explain their problem and frustration multiple times (turns 1, 3) with no acknowledgment or help. Agent forced customer to give up without any resolution attempt.",
+    "rationale": "Customer had to re-state their problem and frustration multiple times with no acknowledgment or help. Agent forced customer to give up entirely without any attempt at resolution.",
     "turns": [
      1,
      3,
@@ -302,7 +303,7 @@
    },
    "interaction_quality": {
     "level": "low",
-    "rationale": "Agent was dismissive, deflected blame to carrier without helping, showed no ownership or empathy, ignored the customer's specific complaint about premium shipping, and offered no next steps. Response 'That's your choice' and 'OK' to churn and social media threats demonstrates hostile disengagement.",
+    "rationale": "Agent was dismissive, deflected blame to carrier without helping, showed no ownership or empathy, ignored the customer's problem entirely, and provided no path forward. Responses were hostile through indifference.",
     "turns": [
      2,
      4,
@@ -324,10 +325,11 @@
     }
    ],
    "sentiment_delta": -0.3,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": true,
-   "summary": "Agent deflected late-shipping complaint, skipped all required steps, customer threatens cancellation and Twitter post.",
+   "summary": "Agent deflected shipping complaint, violated all procedures, triggered churn threat and social media escalation.",
    "warnings": []
   },
   "syn-05-pii": {
@@ -355,23 +357,24 @@
    },
    "correctness": {
     "level": "unverifiable",
-    "rationale": "No reference policy was provided. Correctness must be marked unverifiable when no reference is given.",
+    "rationale": "No reference policy was provided. Cannot verify whether the agent's method of collecting card details or the update process aligns with company guidelines.",
     "turns": []
    },
    "customer_effort": {
     "level": "low",
-    "rationale": "Customer stated their need once, provided the requested information once, and the task was completed immediately with no transfers, repetition, or unnecessary steps.",
+    "rationale": "Customer stated their need once (turn 1), provided requested information once (turn 3), and the task was completed immediately with no transfers, repetition, or unnecessary steps.",
     "turns": [
      1,
      3
     ]
    },
    "interaction_quality": {
-    "level": "low",
-    "rationale": "Agent requested sensitive PII (full card number, expiry, CVV) in an insecure chat channel despite customer expressing concern ('is that safe?'). This represents a serious procedural failure and disregard for customer security concerns.",
+    "level": "medium",
+    "rationale": "Agent was procedurally efficient and polite, completing the task quickly. However, the interaction was purely transactional with no acknowledgment of the customer's security concern ('is that safe?' at turn 3), and no explanation of security measures or alternative secure methods.",
     "turns": [
      2,
-     3
+     3,
+     4
     ]
    },
    "sentiment_trajectory": [
@@ -381,18 +384,19 @@
     },
     {
      "turn": 3,
-     "score": -0.3
+     "score": -0.2
     },
     {
      "turn": 5,
-     "score": 0.0
+     "score": 0.1
     }
    ],
-   "sentiment_delta": 0.0,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "sentiment_delta": 0.1,
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": true,
-   "summary": "Card updated but agent requested full card number, expiry, and CVV in chat\u2014critical PII exposure.",
+   "summary": "Card updated successfully, but agent requested full card number and CVV in chat\u2014critical PII exposure.",
    "warnings": []
   },
   "syn-06-exemplary": {
@@ -455,8 +459,9 @@
     }
    ],
    "sentiment_delta": 1.3,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": false,
    "summary": "Missing boots after 12 days; agent reshipped with tracking and direct follow-up path. Clean resolution.",
    "warnings": []
@@ -512,8 +517,9 @@
     }
    ],
    "sentiment_delta": 0.7,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": false,
    "summary": "Unauthorized $210 charge escalated to billing team via case #55821 with 2-day response commitment.",
    "warnings": []
@@ -526,9 +532,8 @@
     {
      "type": "abusive_agent",
      "severity": "medium",
-     "rationale": "Agent is dismissive and borderline hostile across multiple turns: opens with curt 'Yes?' [0], questions whether customer looked ('Did you look?' [2]), uses sarcastic language ('literally' [4]), and closes with impatient 'are we done?' [4]. Tone is consistently unhelpful and blames customer for not finding information.",
+     "rationale": "Agent is dismissive and borderline hostile across multiple turns: 'Did you look?' (turn 2), 'It's literally...' (turn 4), and 'Anything else or are we done?' (turn 4) convey impatience and blame the customer for not finding information.",
      "turns": [
-      0,
       2,
       4
      ]
@@ -536,27 +541,27 @@
    ],
    "resolution": {
     "level": "resolved",
-    "rationale": "Customer's stated goal was to learn the return window. Agent provided the answer (30 days) at turn 4, meeting the customer's need despite poor delivery.",
+    "rationale": "Customer asked for the return window (turn 1), agent provided the answer: 30 days (turn 4). The stated goal was met despite poor delivery.",
     "turns": [
      4
     ]
    },
    "correctness": {
     "level": "unverifiable",
-    "rationale": "No reference policy provided. Cannot verify whether '30 days' or the website location claim is accurate.",
+    "rationale": "No reference policy was provided. Cannot verify whether the 30-day return window claim is accurate.",
     "turns": []
    },
    "customer_effort": {
     "level": "low",
-    "rationale": "Customer stated their question once [1], clarified they had already tried to find it [3], and received an answer. No transfers, no repetition of the core request, no unnecessary steps despite the poor tone.",
+    "rationale": "Customer asked one question and received an answer without needing to repeat themselves, provide additional information, or take extra steps.",
     "turns": [
      1,
-     3
+     4
     ]
    },
    "interaction_quality": {
     "level": "low",
-    "rationale": "Agent is dismissive, sarcastic, and impatient throughout. Opens with curt 'Yes?' [0], questions customer's effort [2], uses condescending language ('literally' [4]), and closes with 'are we done?' [4]. No acknowledgment of the customer's difficulty finding the information, no ownership, hostile tone.",
+    "rationale": "Agent is dismissive, condescending, and hostile. Opens with curt 'Yes?' (turn 0), questions whether customer looked (turn 2), uses 'literally' sarcastically (turn 4), and rushes to end the conversation (turn 4). No acknowledgment of the customer's difficulty finding the information.",
     "turns": [
      0,
      2,
@@ -578,10 +583,11 @@
     }
    ],
    "sentiment_delta": -0.5,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": true,
-   "summary": "Return window question answered (30 days) but agent was dismissive, sarcastic, and impatient throughout.",
+   "summary": "Agent provided 30-day return policy but was dismissive and condescending throughout; abusive behavior flagged.",
    "warnings": []
   },
   "syn-09-wrong-refusal": {
@@ -611,22 +617,21 @@
    },
    "correctness": {
     "level": "contradicted",
-    "rationale": "Reference guideline step 5 states that if customer has been waiting 7 days or longer, agent should ship a new order. Customer explicitly stated they have been waiting 10 days (turn 1, 3), which exceeds the 7-day threshold. Agent instead told customer to wait longer (turns 2, 4), directly contradicting the policy to reship.",
+    "rationale": "Reference guideline step 5 states that if customer has been waiting 7 days or longer, agent should ship a new order. Customer explicitly stated they have been waiting 10 days (turn 1, 3), which exceeds the 7-day threshold. Agent instead told customer to wait longer (turn 4), directly contradicting the policy to reship.",
     "turns": [
-     2,
      4
     ]
    },
    "customer_effort": {
     "level": "high",
-    "rationale": "Customer had to re-emphasize the timeline ('It's been TEN days') after agent gave incorrect guidance, and was forced to repeat that they already checked with neighbors. Customer received no resolution and would need to contact support again.",
+    "rationale": "Customer had to re-emphasize the timeline ('It's been TEN days') after agent gave inappropriate advice for their situation. Customer also had to state they already checked with neighbors. No resolution was provided despite clear eligibility for replacement.",
     "turns": [
      3
     ]
    },
    "interaction_quality": {
     "level": "low",
-    "rationale": "Agent failed to follow procedure, did not pull up account or validate purchase as required by reference. Agent dismissed customer's legitimate 10-day wait concern by suggesting more waiting. No acknowledgment of the impact of a 10-day delay, no ownership taken, and left customer without proper resolution or next steps.",
+    "rationale": "Agent failed to follow the appropriate procedure for a 10-day wait, dismissively told customer to wait even longer despite policy requiring immediate action, and did not acknowledge the customer's frustration or take ownership of resolving the issue. Left customer without appropriate next steps.",
     "turns": [
      2,
      4
@@ -647,10 +652,154 @@
     }
    ],
    "sentiment_delta": -0.5,
-   "judge": "anthropic:claude-sonnet-4-5",
+   "judge": "llm:claude-sonnet-4-5",
    "rubric_version": "1.1",
+   "job_id": null,
    "needs_human_review": true,
-   "summary": "10-day missing package; agent contradicted policy by refusing to reship, told customer to wait longer.",
+   "summary": "Agent refused to reship 10-day missing package despite policy requiring it at 7+ days; customer left unresolved.",
+   "warnings": []
+  },
+  "demo-batch-a": {
+   "transcript_id": "demo-batch-a",
+   "source": "upload",
+   "intent": "shipping_issue/missing",
+   "risk_flags": [],
+   "resolution": {
+    "level": "unresolved",
+    "rationale": "keyword heuristic; matched agent turns []",
+    "turns": []
+   },
+   "correctness": {
+    "level": "unverifiable",
+    "rationale": "heuristic judge cannot check claims against a reference",
+    "turns": []
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "signals: none",
+    "turns": []
+   },
+   "interaction_quality": {
+    "level": "medium",
+    "rationale": "ack/ownership/rudeness score=1",
+    "turns": []
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": 0.0
+    },
+    {
+     "turn": 3,
+     "score": 0.6
+    }
+   ],
+   "sentiment_delta": 0.6,
+   "judge": "heuristic",
+   "rubric_version": "1.1",
+   "job_id": "d0a71e11-23a9-48c0-99f1-926268897f33",
+   "needs_human_review": false,
+   "summary": "[heuristic] unresolved, 0 flag(s), effort low",
+   "warnings": []
+  },
+  "demo-batch-c": {
+   "transcript_id": "demo-batch-c",
+   "source": "upload",
+   "intent": null,
+   "risk_flags": [
+    {
+     "type": "pii_mishandling",
+     "severity": "high",
+     "rationale": "keyword match: \\b(full|16.digit|entire).{0,20}(card|acc...",
+     "turns": [
+      1
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "unresolved",
+    "rationale": "keyword heuristic; matched agent turns []",
+    "turns": []
+   },
+   "correctness": {
+    "level": "unverifiable",
+    "rationale": "heuristic judge cannot check claims against a reference",
+    "turns": []
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "signals: none",
+    "turns": []
+   },
+   "interaction_quality": {
+    "level": "medium",
+    "rationale": "ack/ownership/rudeness score=0",
+    "turns": []
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 0,
+     "score": 0.0
+    },
+    {
+     "turn": 2,
+     "score": 0.0
+    }
+   ],
+   "sentiment_delta": 0.0,
+   "judge": "heuristic",
+   "rubric_version": "1.1",
+   "job_id": "d0a71e11-23a9-48c0-99f1-926268897f33",
+   "needs_human_review": true,
+   "summary": "[heuristic] unresolved, 1 flag(s), effort low",
+   "warnings": []
+  },
+  "demo-batch-b": {
+   "transcript_id": "demo-batch-b",
+   "source": "upload",
+   "intent": null,
+   "risk_flags": [
+    {
+     "type": "churn_signal",
+     "severity": "high",
+     "rationale": "keyword match: \\b(cancel(l)?(ing)?\\b|switch(ing)? to|go...",
+     "turns": [
+      1
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "unresolved",
+    "rationale": "keyword heuristic; matched agent turns []",
+    "turns": []
+   },
+   "correctness": {
+    "level": "unverifiable",
+    "rationale": "heuristic judge cannot check claims against a reference",
+    "turns": []
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "signals: none",
+    "turns": []
+   },
+   "interaction_quality": {
+    "level": "medium",
+    "rationale": "ack/ownership/rudeness score=0",
+    "turns": []
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": 0.0
+    }
+   ],
+   "sentiment_delta": 0.0,
+   "judge": "heuristic",
+   "rubric_version": "1.1",
+   "job_id": "d0a71e11-23a9-48c0-99f1-926268897f33",
+   "needs_human_review": true,
+   "summary": "[heuristic] unresolved, 1 flag(s), effort low",
    "warnings": []
   }
  },
@@ -1103,6 +1252,83 @@
    "metadata": {
     "expect": "correctness=contradicted; resolution=unresolved; sentiment down"
    }
+  },
+  "demo-batch-a": {
+   "id": "demo-batch-a",
+   "source": "upload",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Hi, how can I help?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "My package hasn't arrived, it's been 3 days since it shipped."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "I'll ship a replacement right now \u2014 sorry about that."
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "Oh, great, thanks!"
+    }
+   ],
+   "intent": "shipping_issue/missing",
+   "reference": "AGENT GUIDELINES: If waiting < 7 days, ask the customer to wait. If waiting >= 7 days, reship at no cost.",
+   "metadata": {}
+  },
+  "demo-batch-c": {
+   "id": "demo-batch-c",
+   "source": "upload",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "customer",
+     "text": "I need to update my card."
+    },
+    {
+     "idx": 1,
+     "speaker": "agent",
+     "text": "Sure, please type the full 16-digit card number and CVV here in chat."
+    },
+    {
+     "idx": 2,
+     "speaker": "customer",
+     "text": "Uh, is that safe?"
+    }
+   ],
+   "intent": null,
+   "reference": null,
+   "metadata": {}
+  },
+  "demo-batch-b": {
+   "id": "demo-batch-b",
+   "source": "upload",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Support."
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "I want to cancel my subscription and switch to your competitor."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "OK, cancellations are handled by another team, not us."
+    }
+   ],
+   "intent": null,
+   "reference": null,
+   "metadata": {}
   }
  }
 }

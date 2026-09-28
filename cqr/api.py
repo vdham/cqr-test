@@ -73,6 +73,17 @@ async def _lifespan(app: FastAPI):
         _runner = None
 
 
+async def _ensure_runner() -> JobRunner:
+    """Lazy-start the runner if `_lifespan` hasn't. Real deployments always
+    hit the lifespan path; this covers tests + programmatic mounts that
+    bypass startup events. Never raises."""
+    global _runner
+    if _runner is None:
+        _runner = _make_runner()
+        await _runner.start()
+    return _runner
+
+
 # ------------------------------------------------------ error-contract matrix ----
 # Single source of truth for what statuses each route can return and what
 # body shape they carry. Reused in @app decorator responses={...} AND in
@@ -294,13 +305,13 @@ async def review_batch(
     `/jobs/{id}` or hit this endpoint with `?wait=true` to block up to
     `CQR_BATCH_WAIT_S`. Duplicate `Idempotency-Key` returns the existing job.
     Oversize batches (> `CQR_MAX_BATCH`) return 422; a full queue returns 429
-    with `Retry-After`."""
-    if _runner is None:
-        raise QueueFull("job runner not started")
-    job = _runner.submit(list(req.transcripts), idempotency_key=idempotency_key)
+    with `Retry-After`. If lifespan hasn't started the runner (unusual outside
+    tests) it is lazy-started on the first submit."""
+    runner = await _ensure_runner()
+    job = runner.submit(list(req.transcripts), idempotency_key=idempotency_key)
     if wait:
         wait_s = float(os.environ.get("CQR_BATCH_WAIT_S", "60"))
-        job = await wait_for_job(_runner, job.id, wait_s) or job
+        job = await wait_for_job(runner, job.id, wait_s) or job
         return Response(content=job.model_dump_json(), status_code=200, media_type="application/json")
     accepted = BatchAccepted(job_id=job.id, status=job.status, total=job.total)
     return Response(content=accepted.model_dump_json(), status_code=202, media_type="application/json")

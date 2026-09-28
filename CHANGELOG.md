@@ -3,6 +3,14 @@
 ## Unreleased
 - (nothing queued)
 
+## 0.4 — 2026-09-28
+- Close-out pass on the error contract and demo evidence:
+  - `POST /review/batch` no longer errors when lifespan hasn't started the runner — it lazy-starts on the first submit. 429 is reserved for real `QueueFull`.
+  - README error table gains a **Client should check** column so 422's two-body-shapes contract is spelled out; regenerated via `scripts/render_error_table.py`.
+  - Anthropic run refreshed on the current rubric (1.1) and LiteLLM judge — `examples/reviews.anthropic.json` stamps `"judge": "llm:claude-sonnet-4-5"`; eval score is **22/22**.
+  - `scripts/demo.sh` — one-shot demo: start the API, print URLs for `syn-06`/`syn-01`/`syn-05`, drive `POST /review/batch?wait=true` against `tests/fixtures/batch3.json`. Works with no API key.
+  - README + TRADEOFFS interviewer read-through: test count updated to 315, contract example refreshed with `judge: llm:*` + `rubric_version` + `warnings`, env table adds `CQR_MAX_QUEUE_SIZE` + `CQR_MAX_BODY_BYTES`, layout section mentions the render script and demo.sh.
+
 ## 0.3 — 2026-09-28
 - specs/002-batch-litellm complete (two commits):
   - Part 1 `feat(api): async batch jobs with bounded in-process queue` (`0773603`): `cqr/jobs.py::JobRunner` with `asyncio.Queue` + N workers, latched per-job circuit breaker, LRU eviction, `Idempotency-Key` dedupe. Schema: `Job`, `JobStatus`, `JobError`, `BatchAccepted`, `Review.job_id`, `CQR_MAX_BATCH` cap. `POST /review/batch` is now 202+poll (or 200 with `?wait=true`), `GET /jobs`, `/jobs/{id}`, `/jobs/{id}/reviews`, `/reviews?job_id=` filter. CLI: `--concurrency`, exit 1 on failures, exit 2 on missing file, malformed-JSONL tolerance. Dashboard surfaces `job_id`.

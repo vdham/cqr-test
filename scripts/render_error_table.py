@@ -20,23 +20,34 @@ from cqr.api import ERROR_RESPONSES  # noqa: E402
 
 # Every (error_type, status) pair the app can emit -> what the client should
 # do about it. Keyed by (status, error_type) because 422 has two occupants.
-CLIENT_ACTIONS: dict[tuple[int, str], tuple[bool, str, str]] = {
+# `check` names what the client must inspect BEFORE branching: for most
+# statuses the status alone is enough (`—`); on 422 the client must open
+# the body since one status carries two different shapes.
+CLIENT_ACTIONS: dict[tuple[int, str], tuple[bool, str, str, str]] = {
     (413, "PayloadTooLarge"):     (False, "Request body exceeded `CQR_MAX_BODY_BYTES`.",
-                                          "Split the batch or trim the transcript."),
+                                          "Split the batch or trim the transcript.",
+                                          "—"),
     (422, "HTTPValidationError"): (False, "Request body failed schema validation (FastAPI's native `{detail: [...]}` shape).",
-                                          "Fix the request body and resend."),
+                                          "Fix the request body and resend.",
+                                          "Body has `detail: [...]` (no `error_type`)."),
     (422, "TranscriptRejected"):  (False, "Provider accepted the request but rejected this transcript (too long, content policy).",
-                                          "Send the transcript to human review, or trim/redact and resubmit."),
+                                          "Send the transcript to human review, or trim/redact and resubmit.",
+                                          "Body is `ErrorBody` with `error_type == \"TranscriptRejected\"`."),
     (429, "QueueFull"):           (True,  "In-process job queue at capacity.",
-                                          "Back off `Retry-After` seconds and resubmit."),
+                                          "Back off `Retry-After` seconds and resubmit.",
+                                          "`Retry-After` header."),
     (500, "JudgeOutputInvalid"):  (False, "Provider replied, but JSON never validated after output retries.",
-                                          "Send the transcript to human review; the model can't self-correct."),
+                                          "Send the transcript to human review; the model can't self-correct.",
+                                          "—"),
     (502, "JudgeRejected"):       (False, "Provider refused authoritatively — bad key, wrong model, permission denied.",
-                                          "Fix credentials/config and rerun; batch aborts, CLI exits 3."),
+                                          "Fix credentials/config and rerun; batch aborts, CLI exits 3.",
+                                          "—"),
     (503, "JudgeUnavailable"):    (True,  "Transient upstream failure — timeout, rate limit, connection drop.",
-                                          "Retry after `Retry-After` seconds; resubmit `errors[].transcript_id` where `retryable`."),
+                                          "Retry after `Retry-After` seconds; resubmit `errors[].transcript_id` where `retryable`.",
+                                          "`Retry-After` header."),
     (404, "NotFound"):            (False, "No resource with that id (may have been LRU-evicted from the job table).",
-                                          "Check the id; if it's a job, it may have aged out of `CQR_MAX_JOBS_KEPT`."),
+                                          "Check the id; if it's a job, it may have aged out of `CQR_MAX_JOBS_KEPT`.",
+                                          "—"),
 }
 
 
@@ -69,11 +80,11 @@ def render() -> str:
     lines: list[str] = []
     lines.append("### Status × error_type")
     lines.append("")
-    lines.append("| Status | `error_type` | Retryable | Meaning | Client action |")
-    lines.append("|---|---|---|---|---|")
+    lines.append("| Status | `error_type` | Retryable | Meaning | Client should check | Client action |")
+    lines.append("|---|---|---|---|---|---|")
     for status, et in rows:
-        retryable, meaning, action = CLIENT_ACTIONS[(status, et)]
-        lines.append(f"| **{status}** | `{et}` | {'✓' if retryable else '✗'} | {meaning} | {action} |")
+        retryable, meaning, action, check = CLIENT_ACTIONS[(status, et)]
+        lines.append(f"| **{status}** | `{et}` | {'✓' if retryable else '✗'} | {meaning} | {check} | {action} |")
     lines.append("")
     lines.append("### Body shape")
     lines.append("")

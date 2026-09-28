@@ -47,6 +47,9 @@ python scripts/eval_synthetic.py
 
 # API + dashboard
 uvicorn cqr.api:app --reload      # dashboard http://127.0.0.1:8000/  ·  Swagger UI http://127.0.0.1:8000/docs (prefilled example bodies)
+
+# one-shot demo: dashboard + interesting URLs + a live batch through the async job flow. Works with no API key.
+scripts/demo.sh
 ```
 
 ### Batch flow (accept-then-poll)
@@ -81,26 +84,28 @@ curl -s http://127.0.0.1:8000/jobs/$JOB/reviews
 | `CQR_BATCH_WAIT_S` | `60` | Max seconds `POST /review/batch?wait=true` blocks before returning the current job snapshot. |
 | `CQR_CIRCUIT_THRESHOLD` | `5` | Consecutive retryable failures on one job before remaining items short-circuit as `CircuitOpen`. |
 | `CQR_MAX_JOBS_KEPT` | `100` | LRU cap on the in-memory job table. |
+| `CQR_MAX_QUEUE_SIZE` | `0` (unbounded) | Bound the number of items in-flight across all jobs. If reached, `POST /review/batch` returns 429 QueueFull. |
+| `CQR_MAX_BODY_BYTES` | `5000000` | Reject requests over this size at the ASGI layer with 413 PayloadTooLarge before any body parsing. |
 | `CQR_STORE` | `out/reviews.json` | Path to the JSON store. |
 
 ## Tests
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                          # 292 tests, ~4s, no network
+pytest                          # 315 tests, ~4s, no network
 coverage run --source=cqr -m pytest && coverage report   # 100% line coverage across cqr/*
 ```
 
-Tests are pure-Python and hermetic: `litellm.completion` is monkeypatched, the store uses `tmp_path`, and the FastAPI endpoints run through `TestClient` against a `HeuristicJudge`. `scripts/eval_synthetic.py` is separate — it scores stored reviews against `metadata.expect`, offline (no model call). Run `python -m cqr.cli review --synthetic data/synthetic.jsonl ...` first.
+Tests are pure-Python and hermetic: `litellm.completion` is monkeypatched, the store uses `tmp_path`, and the FastAPI endpoints run through `TestClient` against a `HeuristicJudge`. A drift-tracking ASGI middleware (see `tests/conftest.py`) records every `(route, status)` the app emits during the session; `tests/test_error_contract.py::TestDriftCheck` asserts none was undeclared in the OpenAPI spec. `scripts/eval_synthetic.py` is separate — it scores stored reviews against `metadata.expect`, offline (no model call). Run `python -m cqr.cli review --synthetic data/synthetic.jsonl ...` first.
 
 Synthetic-set eval scores (nine hand-labeled conversations, 22 anchored checks):
 
 | Judge | Model | Rubric | Eval |
 |---|---|---|---|
 | `heuristic` | (regex baseline) | 1.1 | 18/22 |
-| `anthropic` | `claude-sonnet-4-5` | 1.1 | 22/22 |
+| `llm` | `claude-sonnet-4-5` (via LiteLLM) | 1.1 | 22/22 |
 
-The anthropic run is committed at `examples/reviews.anthropic.json`. Browse it in the dashboard with no key needed:
+The LLM run is committed at `examples/reviews.anthropic.json` (filename is legacy; the `judge` field on each review is `llm:claude-sonnet-4-5`). Browse it in the dashboard with no key needed:
 
 ```bash
 CQR_STORE=examples/reviews.anthropic.json uvicorn cqr.api:app --reload
@@ -148,7 +153,9 @@ review.model_dump()
   "sentiment_delta": 1.2,
   "needs_human_review": true,
   "summary": "Reshipped at 3 days against the 7-day rule; customer happy, policy violated.",
-  "judge": "anthropic:claude-sonnet-4-5"
+  "judge": "llm:claude-sonnet-4-5",
+  "rubric_version": "1.1",
+  "warnings": []
 }
 ```
 
@@ -178,16 +185,16 @@ The section below is **generated** from `cqr.api.ERROR_RESPONSES` by `scripts/re
 <!-- ERROR-TABLE-START -->
 ### Status × error_type
 
-| Status | `error_type` | Retryable | Meaning | Client action |
-|---|---|---|---|---|
-| **404** | `NotFound` | ✗ | No resource with that id (may have been LRU-evicted from the job table). | Check the id; if it's a job, it may have aged out of `CQR_MAX_JOBS_KEPT`. |
-| **413** | `PayloadTooLarge` | ✗ | Request body exceeded `CQR_MAX_BODY_BYTES`. | Split the batch or trim the transcript. |
-| **422** | `HTTPValidationError` | ✗ | Request body failed schema validation (FastAPI's native `{detail: [...]}` shape). | Fix the request body and resend. |
-| **422** | `TranscriptRejected` | ✗ | Provider accepted the request but rejected this transcript (too long, content policy). | Send the transcript to human review, or trim/redact and resubmit. |
-| **429** | `QueueFull` | ✓ | In-process job queue at capacity. | Back off `Retry-After` seconds and resubmit. |
-| **500** | `JudgeOutputInvalid` | ✗ | Provider replied, but JSON never validated after output retries. | Send the transcript to human review; the model can't self-correct. |
-| **502** | `JudgeRejected` | ✗ | Provider refused authoritatively — bad key, wrong model, permission denied. | Fix credentials/config and rerun; batch aborts, CLI exits 3. |
-| **503** | `JudgeUnavailable` | ✓ | Transient upstream failure — timeout, rate limit, connection drop. | Retry after `Retry-After` seconds; resubmit `errors[].transcript_id` where `retryable`. |
+| Status | `error_type` | Retryable | Meaning | Client should check | Client action |
+|---|---|---|---|---|---|
+| **404** | `NotFound` | ✗ | No resource with that id (may have been LRU-evicted from the job table). | — | Check the id; if it's a job, it may have aged out of `CQR_MAX_JOBS_KEPT`. |
+| **413** | `PayloadTooLarge` | ✗ | Request body exceeded `CQR_MAX_BODY_BYTES`. | — | Split the batch or trim the transcript. |
+| **422** | `HTTPValidationError` | ✗ | Request body failed schema validation (FastAPI's native `{detail: [...]}` shape). | Body has `detail: [...]` (no `error_type`). | Fix the request body and resend. |
+| **422** | `TranscriptRejected` | ✗ | Provider accepted the request but rejected this transcript (too long, content policy). | Body is `ErrorBody` with `error_type == "TranscriptRejected"`. | Send the transcript to human review, or trim/redact and resubmit. |
+| **429** | `QueueFull` | ✓ | In-process job queue at capacity. | `Retry-After` header. | Back off `Retry-After` seconds and resubmit. |
+| **500** | `JudgeOutputInvalid` | ✗ | Provider replied, but JSON never validated after output retries. | — | Send the transcript to human review; the model can't self-correct. |
+| **502** | `JudgeRejected` | ✗ | Provider refused authoritatively — bad key, wrong model, permission denied. | — | Fix credentials/config and rerun; batch aborts, CLI exits 3. |
+| **503** | `JudgeUnavailable` | ✓ | Transient upstream failure — timeout, rate limit, connection drop. | `Retry-After` header. | Retry after `Retry-After` seconds; resubmit `errors[].transcript_id` where `retryable`. |
 
 ### Body shape
 
@@ -245,15 +252,15 @@ The `Transcript` and `Review` schemas are the public contract. Judge implementat
 ## Layout
 
 ```
-cqr/schema.py      the contract (Transcript in, Review out) + Job / JobStatus / JobError / BatchAccepted
+cqr/schema.py      the contract (Transcript in, Review out) + Job / JobStatus / JobError / BatchAccepted / ErrorBody
 cqr/rubric.py      the anchored rubric — this is the product
-cqr/errors.py      the JudgeError taxonomy (Unavailable / Rejected / TranscriptRejected / OutputInvalid)
+cqr/errors.py      the JudgeError taxonomy + non-judge errors (QueueFull / NotFoundError / PayloadTooLarge)
 cqr/judge.py       LLMJudge (LiteLLM) and HeuristicJudge (regex baseline); both emit Review
 cqr/jobs.py        in-process bounded queue: JobRunner, workers, circuit breaker, idempotency
 cqr/loader.py      ABCD + JSONL ingest; maps ABCD intents to guideline text for correctness
 cqr/cli.py         batch runner
-cqr/api.py         FastAPI endpoints + dashboard
+cqr/api.py         FastAPI endpoints + dashboard; single ERROR_RESPONSES matrix drives OpenAPI
 cqr/static/        one-file dashboard
-scripts/           synthetic data generator, synthetic eval
-tests/             pytest suite — hermetic, 100% line coverage across cqr/*
+scripts/           synthetic data generator, synthetic eval, error-table renderer, one-shot demo (demo.sh)
+tests/             pytest suite — hermetic, 100% line coverage across cqr/*; test_error_contract.py pins the OpenAPI spec against the code
 ```
