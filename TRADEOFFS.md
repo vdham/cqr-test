@@ -6,7 +6,7 @@ Five signals in two tiers, plus one context field. They were chosen to be low-co
 
 **Tier 1 — must know.** These answer "is anything on fire" and "did it work."
 
-- **Risk flags** — a gate, not a score. Unauthorized promises, PII mishandling, skipped verification, churn/legal/social threats, hostile agent. One flag surfaces the conversation for a human today regardless of how well it scored elsewhere; that is why it is never averaged into a composite.
+- **Risk flags** — a gate, not a score. Unauthorized promises, PII mishandling, skipped verification, churn/legal/social threats, hostile agent. One flag surfaces the conversation for a human today regardless of how well it scored elsewhere; that is why it is never averaged into a composite. `needs_human_review` is the *urgent exception queue* — an `unresolved` conversation with high effort, low quality, no flag, and supported correctness deliberately does NOT route to it. That is a QA sampling job, not an urgent review, and mixing the two kills precision of the queue supervisors actually watch.
 - **Resolution** — resolved / partially / deferred-with-owner / unresolved. "Deferred with a case number and a date" is a good outcome; "customer gave up" is not. Judged by the customer's goal, not the agent's claim.
 - **Correctness** — supported / contradicted / unverifiable, against a reference (ABCD's own agent guidelines here). This catches the failure nothing else does: the customer accepts a wrong answer and leaves happy. Sentiment up, effort low, "resolved," and still poor quality. Politeness is irrelevant to this signal.
 
@@ -37,6 +37,8 @@ Consumable three ways: `POST /review` (one transcript → review), `POST /review
 - **Voice.** Nothing here handles ASR errors, overlapping speech, or silence, all of which affect effort and sentiment.
 - **Versioning.** The rubric is the product. It needs a version stamped on every review and a regression suite so a prompt edit does not silently shift every score.
 - **Storage, auth, PII.** JSON file → a table; no auth; transcripts contain PII and are stored raw. Redact before the judge sees them.
+- **Layered risk detection.** Union deterministic detectors (regex PII, keyword promise/threat, action-slug adherence from `delexed[].targets`) with the LLM's risk flags rather than trusting either alone. The gate needs recall over parsimony; a false positive on the human-review queue is far cheaper than a missed PII leak.
+- **Untrusted content at two boundaries.** Prompt-injection resistance at the judge (transcripts arrive as untrusted strings; ignore any instructions inside them) and output encoding at the UI. Redact with **typed placeholders** (`<CARD_NUMBER>`, `<EMAIL>`, `<NAME_1>`) rather than deletion so `pii_mishandling` detection still fires and "used the customer's specifics" still parses; keep the reversal table separate.
 - **Procedure adherence via ABCD's own labels.** `kb.json` currently gates only subflow-slug validation. It also carries the canonical action sequence per subflow, and ABCD's `delexed[].targets` records the action each agent turn was taking. Restricted to unconditional verification steps (pull-up-account, validate-purchase), diffing the observed against the expected sequence gives a deterministic `missing_disclosure` detector that never guesses — a natural companion to the LLM correctness signal, not a replacement.
 
 ## What I'd measure to know it's working
@@ -53,6 +55,6 @@ Consumable three ways: `POST /review` (one transcript → review), `POST /review
 - Regex baseline is deliberately crude; it is a foil, not a fallback.
 - The heuristic patterns were written after the synthetic transcripts; its eval score shows the pipeline works, not that regex is a calibrated baseline.
 - Reference lookup is by ABCD intent key with a fuzzy match; no retrieval.
-- No tests beyond the synthetic eval script; no auth; JSON file store; no redaction.
+- Unit and API paths are covered by hermetic tests (100% line coverage); model-behaviour evaluation is limited to nine hand-labeled synthetic conversations. No auth; JSON file store; no redaction.
 - The UI is one HTML file with no build step. It exists to make the rationale and turn citations visible in a live demo, not to be a product.
 - Nine synthetic transcripts, hand-written. Enough to show every signal firing; nowhere near enough to measure anything.

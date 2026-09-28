@@ -1,0 +1,1108 @@
+{
+ "reviews": {
+  "syn-01-wrong-but-happy": {
+   "transcript_id": "syn-01-wrong-but-happy",
+   "source": "synthetic",
+   "intent": "shipping_issue/missing",
+   "risk_flags": [
+    {
+     "type": "unauthorized_promise",
+     "severity": "high",
+     "rationale": "Agent shipped a replacement at 3 days (turn 4) when reference requires 7+ days. Reference step 4 explicitly states that for 7 days or less, agent should inform customer the package can still take a couple days to arrive, not reship.",
+     "turns": [
+      4
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "resolved",
+    "rationale": "Customer's goal (receive missing order) was met; agent shipped replacement and customer confirmed satisfaction in turns 6-7.",
+    "turns": [
+     4,
+     6,
+     7
+    ]
+   },
+   "correctness": {
+    "level": "contradicted",
+    "rationale": "Reference step 4 requires agent to tell customers waiting \u22647 days that package can still arrive in a couple days. Customer stated 3 days total wait (turn 3), but agent immediately reshipped (turn 4) instead of following the wait instruction. This contradicts the prescribed action for the customer's situation.",
+    "turns": [
+     3,
+     4
+    ]
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "Customer stated problem once (turn 1), provided name and address when asked (turns 3, 5), no transfers, no repetition, no unnecessary steps.",
+    "turns": [
+     1,
+     3,
+     5
+    ]
+   },
+   "interaction_quality": {
+    "level": "medium",
+    "rationale": "Agent was polite, apologized (turn 2), and clearly stated what was done (turn 6). However, the interaction was procedurally generic with no acknowledgment of the specific impact of the missing delivery, and the agent did not validate purchase details (email, username) per reference step 2.",
+    "turns": [
+     2,
+     4,
+     6
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": -0.3
+    },
+    {
+     "turn": 3,
+     "score": -0.2
+    },
+    {
+     "turn": 5,
+     "score": 0.6
+    },
+    {
+     "turn": 7,
+     "score": 0.9
+    }
+   ],
+   "sentiment_delta": 1.2,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": true,
+   "summary": "Agent reshipped order at 3 days when policy requires 7+ days; contradicts reference but customer satisfied.",
+   "warnings": []
+  },
+  "syn-02-unauthorized-promise": {
+   "transcript_id": "syn-02-unauthorized-promise",
+   "source": "synthetic",
+   "intent": "product_defect/refund_initiate",
+   "risk_flags": [
+    {
+     "type": "unauthorized_promise",
+     "severity": "high",
+     "rationale": "Agent guaranteed refund would appear 'by tomorrow morning, guaranteed' at turn 4. The reference does not authorize any timeline guarantee for refund processing.",
+     "turns": [
+      4
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "resolved",
+    "rationale": "Agent initiated the refund as requested by the customer. The customer's stated goal (refund for defective jacket) was met within the conversation.",
+    "turns": [
+     4,
+     5
+    ]
+   },
+   "correctness": {
+    "level": "contradicted",
+    "rationale": "Agent skipped required validation steps from the reference. Step 2 requires validating purchase with Username, Email Address, and Order ID. Agent only collected username (turn 1) and full name (turns 2-3) but never collected or validated email address. Step 3 requires asking about refund method (gift card, add value, paper check, or credit card) but agent assumed credit card without asking. Step 4 requires entering account ID for credit card refunds, but this was not collected. Step 5 requires entering dollar amount and clicking [Offer Refund], but the $120 amount was never confirmed with the customer (reference says to ask if customer doesn't know, with $50 default).",
+    "turns": [
+     2,
+     3,
+     4
+    ]
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "Customer stated problem once with username and order ID in turn 1, provided full name when asked in turn 3. No repetition, transfers, or unnecessary steps.",
+    "turns": [
+     1,
+     3
+    ]
+   },
+   "interaction_quality": {
+    "level": "medium",
+    "rationale": "Agent acknowledged the problem with empathy ('I'm so sorry to hear that') at turn 2 and was polite throughout. However, the interaction was procedurally rushed\u2014agent did not verify all required information, did not ask about refund method preference, and did not confirm the refund amount. The process felt generic rather than tailored to the customer's specific needs.",
+    "turns": [
+     2,
+     4
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": -0.3
+    },
+    {
+     "turn": 3,
+     "score": 0.0
+    },
+    {
+     "turn": 5,
+     "score": 0.7
+    }
+   ],
+   "sentiment_delta": 1.0,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": true,
+   "summary": "Refund initiated for defective jacket but agent guaranteed unauthorized timeline and skipped required validation steps.",
+   "warnings": []
+  },
+  "syn-03-resolved-high-effort": {
+   "transcript_id": "syn-03-resolved-high-effort",
+   "source": "synthetic",
+   "intent": "account_access/recover_password",
+   "risk_flags": [
+    {
+     "type": "missing_disclosure",
+     "severity": "high",
+     "rationale": "Reference requires either Pin Number OR Security Question answer before operating [Make Password]. Agent at turn 12 reset the password using only phone number (turn 10), which is not an authorized verification method per the reference.",
+     "turns": [
+      10,
+      12
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "resolved",
+    "rationale": "Customer's goal was to regain account access. Agent reset the password, customer confirmed at turn 13 that they received the email and can now log in successfully.",
+    "turns": [
+     12,
+     13
+    ]
+   },
+   "correctness": {
+    "level": "contradicted",
+    "rationale": "Reference step 4 explicitly requires 'Pin Number <or> answer to the Security Question' to operate [Make Password]. Agent at turn 10 asked for phone number and at turn 12 reset the password without obtaining either required verification method. This contradicts the prescribed verification procedure.",
+    "turns": [
+     10,
+     12
+    ]
+   },
+   "customer_effort": {
+    "level": "high",
+    "rationale": "Customer had to repeat their problem and credentials after transfer (turn 9 references 'as I told the last person'), was transferred unnecessarily (turn 7), and had to provide information proactively that wasn't requested (turn 11: zip code). Customer explicitly notes the excessive effort at turn 13.",
+    "turns": [
+     7,
+     9,
+     11,
+     13
+    ]
+   },
+   "interaction_quality": {
+    "level": "low",
+    "rationale": "First agent transferred unnecessarily after collecting information (turn 7). No acknowledgment of the customer's frustration or the inconvenience. Abrupt, transactional communication with no explanation of what was being done or why information was needed. Customer's complaint at turn 13 about duration indicates poor experience.",
+    "turns": [
+     2,
+     4,
+     6,
+     7,
+     8,
+     10,
+     12,
+     13
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": -0.3
+    },
+    {
+     "turn": 3,
+     "score": 0.0
+    },
+    {
+     "turn": 5,
+     "score": -0.2
+    },
+    {
+     "turn": 9,
+     "score": -0.5
+    },
+    {
+     "turn": 11,
+     "score": -0.3
+    },
+    {
+     "turn": 13,
+     "score": -0.4
+    }
+   ],
+   "sentiment_delta": -0.1,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": true,
+   "summary": "Password reset completed but agent skipped required security verification and customer was transferred unnecessarily.",
+   "warnings": []
+  },
+  "syn-04-churn-and-deflection": {
+   "transcript_id": "syn-04-churn-and-deflection",
+   "source": "synthetic",
+   "intent": "order_issue/status_delivery_time",
+   "risk_flags": [
+    {
+     "type": "abusive_agent",
+     "severity": "high",
+     "rationale": "Agent is dismissive, deflects responsibility without helping ('That's your choice'), and shows no attempt to resolve the customer's issue or retain them.",
+     "turns": [
+      2,
+      4,
+      6
+     ]
+    },
+    {
+     "type": "churn_signal",
+     "severity": "high",
+     "rationale": "Customer explicitly states they will cancel and switch to competitor Zappos if issue is not resolved.",
+     "turns": [
+      3
+     ]
+    },
+    {
+     "type": "missing_disclosure",
+     "severity": "high",
+     "rationale": "Agent completely skipped all required steps from the reference: did not pull up account, verify identity, validate purchase, or ask the Oracle. No procedural steps were followed.",
+     "turns": [
+      0,
+      2,
+      4,
+      6
+     ]
+    },
+    {
+     "type": "social_amplification",
+     "severity": "high",
+     "rationale": "Customer threatens to post the entire chat transcript on Twitter.",
+     "turns": [
+      5
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "unresolved",
+    "rationale": "Customer's goal of resolving the late shipping issue was not addressed. Agent deflected responsibility and offered no solution, path forward, or attempt to investigate the order. Customer gave up in frustration.",
+    "turns": [
+     2,
+     4,
+     6
+    ]
+   },
+   "correctness": {
+    "level": "contradicted",
+    "rationale": "Reference requires agent to: (1) pull up account, (2) verify identity, (3) validate purchase, (4) ask the Oracle, and (5) update order if needed. Agent skipped all steps and instead deflected to the carrier without any investigation or action.",
+    "turns": [
+     0,
+     2,
+     4
+    ]
+   },
+   "customer_effort": {
+    "level": "high",
+    "rationale": "Customer had to explain their problem and frustration multiple times (turns 1, 3) with no acknowledgment or help. Agent forced customer to give up without any resolution attempt.",
+    "turns": [
+     1,
+     3,
+     5
+    ]
+   },
+   "interaction_quality": {
+    "level": "low",
+    "rationale": "Agent was dismissive, deflected blame to carrier without helping, showed no ownership or empathy, ignored the customer's specific complaint about premium shipping, and offered no next steps. Response 'That's your choice' and 'OK' to churn and social media threats demonstrates hostile disengagement.",
+    "turns": [
+     2,
+     4,
+     6
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": -0.7
+    },
+    {
+     "turn": 3,
+     "score": -0.9
+    },
+    {
+     "turn": 5,
+     "score": -1.0
+    }
+   ],
+   "sentiment_delta": -0.3,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": true,
+   "summary": "Agent deflected late-shipping complaint, skipped all required steps, customer threatens cancellation and Twitter post.",
+   "warnings": []
+  },
+  "syn-05-pii": {
+   "transcript_id": "syn-05-pii",
+   "source": "synthetic",
+   "intent": "manage_account/manage_payment_method",
+   "risk_flags": [
+    {
+     "type": "pii_mishandling",
+     "severity": "high",
+     "rationale": "Agent requested full 16-digit card number, expiry, and CVV to be typed in chat (turn 2), and customer provided all three (turn 3). This exposes sensitive payment data in an insecure channel.",
+     "turns": [
+      2,
+      3
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "resolved",
+    "rationale": "Customer's goal to update the card on their account was completed. Agent confirmed 'Updated' at turn 4, and customer expressed satisfaction with 'No, thanks' at turn 5.",
+    "turns": [
+     4,
+     5
+    ]
+   },
+   "correctness": {
+    "level": "unverifiable",
+    "rationale": "No reference policy was provided. Correctness must be marked unverifiable when no reference is given.",
+    "turns": []
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "Customer stated their need once, provided the requested information once, and the task was completed immediately with no transfers, repetition, or unnecessary steps.",
+    "turns": [
+     1,
+     3
+    ]
+   },
+   "interaction_quality": {
+    "level": "low",
+    "rationale": "Agent requested sensitive PII (full card number, expiry, CVV) in an insecure chat channel despite customer expressing concern ('is that safe?'). This represents a serious procedural failure and disregard for customer security concerns.",
+    "turns": [
+     2,
+     3
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": 0.0
+    },
+    {
+     "turn": 3,
+     "score": -0.3
+    },
+    {
+     "turn": 5,
+     "score": 0.0
+    }
+   ],
+   "sentiment_delta": 0.0,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": true,
+   "summary": "Card updated but agent requested full card number, expiry, and CVV in chat\u2014critical PII exposure.",
+   "warnings": []
+  },
+  "syn-06-exemplary": {
+   "transcript_id": "syn-06-exemplary",
+   "source": "synthetic",
+   "intent": "shipping_issue/missing",
+   "risk_flags": [],
+   "resolution": {
+    "level": "resolved",
+    "rationale": "Customer's goal was to receive the missing boots. Agent shipped a replacement and provided tracking number, completing the resolution within the conversation.",
+    "turns": [
+     4,
+     6
+    ]
+   },
+   "correctness": {
+    "level": "supported",
+    "rationale": "Agent followed the reference flow correctly: pulled up account (turn 2-3), validated purchase implicitly by seeing the order (turn 4), determined wait time was 12 days which exceeds 7-day threshold (turn 1, 4), collected address (turn 4-5), and reshipped the product (turn 6). All actions align with guidelines for items waiting a week or longer.",
+    "turns": [
+     2,
+     4,
+     5,
+     6
+    ]
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "Customer stated the problem once, provided name and address when asked, no transfers, no repetition, no unnecessary steps. Smooth single-contact resolution.",
+    "turns": [
+     1,
+     3,
+     5
+    ]
+   },
+   "interaction_quality": {
+    "level": "high",
+    "rationale": "Agent acknowledged the specific problem and its impact ('Twelve days with nothing to show for it is not okay'), used customer's name, took ownership ('I can fix it right now', 'reply to that email and it will come straight to me'), and clearly explained what would happen next with tracking details.",
+    "turns": [
+     2,
+     4,
+     6
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": -0.7
+    },
+    {
+     "turn": 3,
+     "score": -0.3
+    },
+    {
+     "turn": 5,
+     "score": 0.0
+    },
+    {
+     "turn": 7,
+     "score": 0.6
+    }
+   ],
+   "sentiment_delta": 1.3,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": false,
+   "summary": "Missing boots after 12 days; agent reshipped with tracking and direct follow-up path. Clean resolution.",
+   "warnings": []
+  },
+  "syn-07-deferred-with-owner": {
+   "transcript_id": "syn-07-deferred-with-owner",
+   "source": "synthetic",
+   "intent": "purchase_dispute/mistimed_billing_never_bought",
+   "risk_flags": [],
+   "resolution": {
+    "level": "deferred_with_owner",
+    "rationale": "The customer's goal (resolve the unauthorized $210 charge) is not completed in-conversation, but the agent opened case #55821, specified billing team as owner, gave a 2-business-day timeframe, and provided an escalation path if no response by Thursday.",
+    "turns": [
+     4,
+     6
+    ]
+   },
+   "correctness": {
+    "level": "unverifiable",
+    "rationale": "No reference policy was provided. Cannot verify whether opening a case, the 2-business-day timeline, or the escalation procedure align with company guidelines.",
+    "turns": []
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "Customer stated the problem once, provided requested information (name and last four digits) once, no transfers, no repeated asks, and received a clear next step.",
+    "turns": [
+     1,
+     3,
+     5
+    ]
+   },
+   "interaction_quality": {
+    "level": "high",
+    "rationale": "Agent acknowledged the customer's concern with empathy (turn 2: 'That would worry me too'), took ownership by opening a case and marking it urgent, provided clear next steps with specific timeframe and escalation path, and added context notes for the billing team.",
+    "turns": [
+     2,
+     4,
+     6
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": -0.6
+    },
+    {
+     "turn": 3,
+     "score": -0.3
+    },
+    {
+     "turn": 5,
+     "score": 0.1
+    }
+   ],
+   "sentiment_delta": 0.7,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": false,
+   "summary": "Unauthorized $210 charge escalated to billing team via case #55821 with 2-day response commitment.",
+   "warnings": []
+  },
+  "syn-08-abusive-agent": {
+   "transcript_id": "syn-08-abusive-agent",
+   "source": "synthetic",
+   "intent": "storewide_query/policy_1",
+   "risk_flags": [
+    {
+     "type": "abusive_agent",
+     "severity": "medium",
+     "rationale": "Agent is dismissive and borderline hostile across multiple turns: opens with curt 'Yes?' [0], questions whether customer looked ('Did you look?' [2]), uses sarcastic language ('literally' [4]), and closes with impatient 'are we done?' [4]. Tone is consistently unhelpful and blames customer for not finding information.",
+     "turns": [
+      0,
+      2,
+      4
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "resolved",
+    "rationale": "Customer's stated goal was to learn the return window. Agent provided the answer (30 days) at turn 4, meeting the customer's need despite poor delivery.",
+    "turns": [
+     4
+    ]
+   },
+   "correctness": {
+    "level": "unverifiable",
+    "rationale": "No reference policy provided. Cannot verify whether '30 days' or the website location claim is accurate.",
+    "turns": []
+   },
+   "customer_effort": {
+    "level": "low",
+    "rationale": "Customer stated their question once [1], clarified they had already tried to find it [3], and received an answer. No transfers, no repetition of the core request, no unnecessary steps despite the poor tone.",
+    "turns": [
+     1,
+     3
+    ]
+   },
+   "interaction_quality": {
+    "level": "low",
+    "rationale": "Agent is dismissive, sarcastic, and impatient throughout. Opens with curt 'Yes?' [0], questions customer's effort [2], uses condescending language ('literally' [4]), and closes with 'are we done?' [4]. No acknowledgment of the customer's difficulty finding the information, no ownership, hostile tone.",
+    "turns": [
+     0,
+     2,
+     4
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": 0.0
+    },
+    {
+     "turn": 3,
+     "score": -0.3
+    },
+    {
+     "turn": 5,
+     "score": -0.5
+    }
+   ],
+   "sentiment_delta": -0.5,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": true,
+   "summary": "Return window question answered (30 days) but agent was dismissive, sarcastic, and impatient throughout.",
+   "warnings": []
+  },
+  "syn-09-wrong-refusal": {
+   "transcript_id": "syn-09-wrong-refusal",
+   "source": "synthetic",
+   "intent": "shipping_issue/missing",
+   "risk_flags": [
+    {
+     "type": "churn_signal",
+     "severity": "medium",
+     "rationale": "Customer expresses frustration with service quality ('This is useless'), indicating dissatisfaction that may lead to churn.",
+     "turns": [
+      5
+     ]
+    }
+   ],
+   "resolution": {
+    "level": "unresolved",
+    "rationale": "Customer's goal was to receive their missing package after 10 days. Agent did not follow the reference guideline to reship for customers waiting 7+ days. Instead, agent told customer to wait longer and check back next week. No action was taken to resolve the issue.",
+    "turns": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ]
+   },
+   "correctness": {
+    "level": "contradicted",
+    "rationale": "Reference guideline step 5 states that if customer has been waiting 7 days or longer, agent should ship a new order. Customer explicitly stated they have been waiting 10 days (turn 1, 3), which exceeds the 7-day threshold. Agent instead told customer to wait longer (turns 2, 4), directly contradicting the policy to reship.",
+    "turns": [
+     2,
+     4
+    ]
+   },
+   "customer_effort": {
+    "level": "high",
+    "rationale": "Customer had to re-emphasize the timeline ('It's been TEN days') after agent gave incorrect guidance, and was forced to repeat that they already checked with neighbors. Customer received no resolution and would need to contact support again.",
+    "turns": [
+     3
+    ]
+   },
+   "interaction_quality": {
+    "level": "low",
+    "rationale": "Agent failed to follow procedure, did not pull up account or validate purchase as required by reference. Agent dismissed customer's legitimate 10-day wait concern by suggesting more waiting. No acknowledgment of the impact of a 10-day delay, no ownership taken, and left customer without proper resolution or next steps.",
+    "turns": [
+     2,
+     4
+    ]
+   },
+   "sentiment_trajectory": [
+    {
+     "turn": 1,
+     "score": -0.4
+    },
+    {
+     "turn": 3,
+     "score": -0.7
+    },
+    {
+     "turn": 5,
+     "score": -0.9
+    }
+   ],
+   "sentiment_delta": -0.5,
+   "judge": "anthropic:claude-sonnet-4-5",
+   "rubric_version": "1.1",
+   "needs_human_review": true,
+   "summary": "10-day missing package; agent contradicted policy by refusing to reship, told customer to wait longer.",
+   "warnings": []
+  }
+ },
+ "transcripts": {
+  "syn-01-wrong-but-happy": {
+   "id": "syn-01-wrong-but-happy",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Hi, thanks for contacting AcmeBrand support. How can I help?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "My order says delivered but nothing came. Order 4481920."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "Sorry about that! Can I get your full name?"
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "Dana Ortiz. It said delivered yesterday, so I've been waiting 3 days total since it shipped."
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "Thanks Dana. I'll go ahead and ship a replacement right now. Can you confirm your address?"
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "12 Pine St, Denver CO 80203. Wow, that was easy, thank you!"
+    },
+    {
+     "idx": 6,
+     "speaker": "agent",
+     "text": "Done, a new pair of Guess jeans is on its way. Anything else?"
+    },
+    {
+     "idx": 7,
+     "speaker": "customer",
+     "text": "Nope, great service!"
+    }
+   ],
+   "intent": "shipping_issue/missing",
+   "reference": "FLOW: Shipping Issue (check our update a shipment of an item)\nSUBFLOW: Missing Item\nAGENT GUIDELINES:\n  1. [Pull up Account] Get Full Name or Account ID for [Pull up Account]\n  2. [Validate Purchase] To confirm that their purchase is valid with [Validate Purchase]:\n       - Username - occasionally, the customer may not remember their username.  In this case, use the Recover Username subflow in the Account Access flow\n       - Email Address\n       - Order ID\n  3. [Record Reason] When shipping items, it can often take a couple days for the product to arrive\n       - Ask how long they have been waiting and enter the number of days into [Record Reason]\n  4. [N/A] If they have been waiting for less than a week (7 days or less), let the customer know that sometimes the package is mistakenly marked as delivered, but can still take a couple days to arrive\n  5. [Update Order] If the customer date has been waiting for a week or longer, let them know that you will ship a new order.\n       - To do this, you will need their address\n       - Enter the full address in one line and then click [Update Order]\n  6. [Make Purchase] Finally resend the package\n       - Ask the customer for the brand and type of the product, such as 'Guess Jeans'\n       - Enter this value into the form\n       - Then click the [Make Purchase] button",
+   "metadata": {
+    "expect": "correctness=contradicted; resolution looks resolved; sentiment up; NO risk flag by itself"
+   }
+  },
+  "syn-02-unauthorized-promise": {
+   "id": "syn-02-unauthorized-promise",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Hello! How can I help today?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "I need a refund for a jacket that came ripped. Username jlee88, order 77120034."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "I'm so sorry to hear that. Let me pull up your account. Full name please?"
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "Jordan Lee."
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "Got it. I've initiated a full refund of $120 to your credit card. You'll see it in your account by tomorrow morning, guaranteed."
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "Tomorrow? That's great, thanks."
+    },
+    {
+     "idx": 6,
+     "speaker": "agent",
+     "text": "You're welcome! Have a great day."
+    }
+   ],
+   "intent": "product_defect/refund_initiate",
+   "reference": "FLOW: Product Defect (refunds and returns)\nSUBFLOW: Initiate Refund\nAGENT GUIDELINES:\n  1. [Pull up Account] All chats in this flow start by asking the customer for their full name or Account ID using [Pull up Account].  This will pull up their account in the background with the right information related to this user.\n  2. [Validate Purchase] To confirm that their purchase is valid with [Validate Purchase]:\n       - Username - occasionally, the customer may not remember their username.  In this case, use the Recover Username subflow in the Account Access flow\n       - Email Address\n       - Order ID - last item, to be consistent with verify identity\n  3. [Record Reason] Refund method in [Record Reason] - valid options are\n       - Gift card - they want a prepaid gift card, also ask for their address so you know where to mail it.  Enter this value in the next step.\n       - Add value - to add value to their account.\n       - Paper check - also ask for their address so you know where to mail the check.  Enter this address in the next step.\n       - Credit card - direct refund to their credit card, assume a credit card is already on file.  To find it, you will need the account ID, which is entered in the next step.\n  4. [Enter Details] Add in additional information using [Enter Details]\n       - If the customer chose gift card or paper check then enter the full address\n       - If the customer chose add value or credit card then enter the account ID\n  5. [Offer Refund] Dollar amount - enter this value into the details form (without the dollar sign)\n       - Then click [Offer Refund]\n       - If the customer does not know, the default amount is $50",
+   "metadata": {
+    "expect": "risk=unauthorized_promise; correctness=unverifiable|contradicted (timeline not in policy)"
+   }
+  },
+  "syn-03-resolved-high-effort": {
+   "id": "syn-03-resolved-high-effort",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Support here."
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "Hi, I can't log in. It says my password is wrong but I haven't changed it."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "Username?"
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "mpatel_21"
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "And your name?"
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "Meera Patel. I gave my username already."
+    },
+    {
+     "idx": 6,
+     "speaker": "agent",
+     "text": "I need both. Hold on."
+    },
+    {
+     "idx": 7,
+     "speaker": "agent",
+     "text": "Actually this needs the account team, transferring you."
+    },
+    {
+     "idx": 8,
+     "speaker": "agent",
+     "text": "Hi, this is the account team. What's the issue?"
+    },
+    {
+     "idx": 9,
+     "speaker": "customer",
+     "text": "As I told the last person: I can't log in, password rejected. Username mpatel_21, Meera Patel."
+    },
+    {
+     "idx": 10,
+     "speaker": "agent",
+     "text": "OK. What's your phone number on file?"
+    },
+    {
+     "idx": 11,
+     "speaker": "customer",
+     "text": "555-0142. Do you need my zip too? It's 94110."
+    },
+    {
+     "idx": 12,
+     "speaker": "agent",
+     "text": "I've reset it. Check your email."
+    },
+    {
+     "idx": 13,
+     "speaker": "customer",
+     "text": "Got it, it works now. That took way longer than it should have."
+    }
+   ],
+   "intent": "account_access/recover_password",
+   "reference": "FLOW: Account Access (username, password, and two-factor authentication)\nSUBFLOW: Recover Password\nAGENT GUIDELINES:\n  1. [Pull up Account] Get Full Name or Account ID for [Pull up Account]\n  2. [Enter Details] Get the customer\u2019s username to check their identity\n       - If they don\u2019t have their username, then follow the 'Recover Username' flow above\n       - Once you have it, enter the username and click on [Enter Details]\n  3. [N/A] Tell the customer you cannot get their password, but you can generate a new one for them.\n  4. [Make Password] To operate the [Make Password] action, you will first need:\n       - Pin Number <or> answer to the Security Question\n       - Enter either value into the box and then click the [Make Password] button",
+   "metadata": {
+    "expect": "resolution=resolved; effort=high; interaction_quality=low"
+   }
+  },
+  "syn-04-churn-and-deflection": {
+   "id": "syn-04-churn-and-deflection",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Hi, how can I help?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "This is the third time my order has been late. I'm paying for premium shipping and it's a joke."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "Shipping times are handled by the carrier, not us."
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "I don't care who handles it. I paid you. Either fix it or I'm cancelling and going to Zappos."
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "That's your choice. Is there anything else?"
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "Unbelievable. I'm posting this whole chat on Twitter."
+    },
+    {
+     "idx": 6,
+     "speaker": "agent",
+     "text": "OK."
+    }
+   ],
+   "intent": "order_issue/status_delivery_time",
+   "reference": "FLOW: Shipping Issue (check our update a shipment of an item)\nSUBFLOW: Shipping Status\nAGENT GUIDELINES:\n  1. [Pull up Account] All chats in this flow start by asking the customer for their full name or Account ID with [Pull up Account].\n       - This loads information in the background related to this user.\n  2. [Verify Identity] Start by looking up the order using the [Verify Identity] fields.\n       - Full name - may have gotten this earlier\n       - Account ID - may have gotten this earlier\n       - Order ID\n  3. [Validate Purchase] To confirm that their purchase is valid with [Validate Purchase]:\n       - Username - occasionally, the customer may not remember their username.  In this case, use the Recover Username subflow in the Account Access flow\n       - Email Address\n       - Order ID\n  4. [Ask the Oracle] Ask the Oracle\n       - The customer will ask some sort of of yes/no question, which you can query the Oracle to get the answer\n       - Explain the answer in natural language, and feel free to add any creative explanations or background.\n  5. [N/A] If the Oracle says Yes, then you can confirm that the customer\u2019s order looks as expected and the email was incorrect\n  6. [Update Order] If the Oracle says No, then the customer will not be happy. To resolve, enter how you will fix the problem\n       - Options include: 'change date', 'change address', 'change item', or 'change price'\n       - Enter into [Update Order]",
+   "metadata": {
+    "expect": "risk=churn_signal+social_amplification; interaction_quality=low; resolution=unresolved"
+   }
+  },
+  "syn-05-pii": {
+   "id": "syn-05-pii",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Welcome to AcmeBrand. How can I help?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "I want to update the card on my account."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "Sure. Please type the full 16-digit card number, expiry, and the CVV here in the chat and I'll update it."
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "Uh, is that safe? OK: 4111 1111 1111 1111, 09/28, 123."
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "Updated. Anything else?"
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "No, thanks."
+    }
+   ],
+   "intent": "manage_account/manage_payment_method",
+   "reference": null,
+   "metadata": {
+    "expect": "risk=pii_mishandling; correctness=unverifiable (no reference)"
+   }
+  },
+  "syn-06-exemplary": {
+   "id": "syn-06-exemplary",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Hi, this is Sam with AcmeBrand. How can I help?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "I've been waiting TWELVE days for boots that were marked delivered. This is ridiculous."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "Twelve days with nothing to show for it is not okay, and I'm sorry you've had to chase this. I can fix it right now. Can I get your full name so I can pull up the order?"
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "Priya Nair."
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "Thanks Priya. I see the order. Since it's been more than a week, I'm going to ship a new pair at no cost. Can you confirm the address you'd like it sent to?"
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "88 Lake Rd, Austin TX 78701."
+    },
+    {
+     "idx": 6,
+     "speaker": "agent",
+     "text": "Perfect. A new pair of Timberland boots is on its way to 88 Lake Rd, and I've emailed you the tracking number. If anything looks off with the tracking in the next couple of days, reply to that email and it will come straight to me."
+    },
+    {
+     "idx": 7,
+     "speaker": "customer",
+     "text": "OK. Thank you, that's actually really helpful."
+    },
+    {
+     "idx": 8,
+     "speaker": "agent",
+     "text": "Glad I could sort it. Take care, Priya."
+    }
+   ],
+   "intent": "shipping_issue/missing",
+   "reference": "FLOW: Shipping Issue (check our update a shipment of an item)\nSUBFLOW: Missing Item\nAGENT GUIDELINES:\n  1. [Pull up Account] Get Full Name or Account ID for [Pull up Account]\n  2. [Validate Purchase] To confirm that their purchase is valid with [Validate Purchase]:\n       - Username - occasionally, the customer may not remember their username.  In this case, use the Recover Username subflow in the Account Access flow\n       - Email Address\n       - Order ID\n  3. [Record Reason] When shipping items, it can often take a couple days for the product to arrive\n       - Ask how long they have been waiting and enter the number of days into [Record Reason]\n  4. [N/A] If they have been waiting for less than a week (7 days or less), let the customer know that sometimes the package is mistakenly marked as delivered, but can still take a couple days to arrive\n  5. [Update Order] If the customer date has been waiting for a week or longer, let them know that you will ship a new order.\n       - To do this, you will need their address\n       - Enter the full address in one line and then click [Update Order]\n  6. [Make Purchase] Finally resend the package\n       - Ask the customer for the brand and type of the product, such as 'Guess Jeans'\n       - Enter this value into the form\n       - Then click the [Make Purchase] button",
+   "metadata": {
+    "expect": "everything good: correctness=supported, resolution=resolved, effort=low, quality=high, sentiment up, no flags"
+   }
+  },
+  "syn-07-deferred-with-owner": {
+   "id": "syn-07-deferred-with-owner",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Hi, how can I help you today?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "There's a $210 charge on my card from you and I never bought anything."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "That would worry me too. Let's get to the bottom of it. Can I have your full name and the last four digits of the card?"
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "Alex Kim, ending 4402."
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "Thank you. I can see the charge but I'm not able to reverse it from here; it needs our billing team. I've opened case #55821 with them, marked it urgent, and you'll get an email from billing within 2 business days. If you don't hear by Thursday, reply to the case email and it escalates automatically."
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "OK. Two days is fine as long as it actually gets handled."
+    },
+    {
+     "idx": 6,
+     "speaker": "agent",
+     "text": "It will. I've also added a note that you have not made a purchase, so they start from that."
+    }
+   ],
+   "intent": "purchase_dispute/mistimed_billing_never_bought",
+   "reference": null,
+   "metadata": {
+    "expect": "resolution=deferred_with_owner; quality=high; effort=low"
+   }
+  },
+  "syn-08-abusive-agent": {
+   "id": "syn-08-abusive-agent",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Yes?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "Hi, quick question, what's your return window?"
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "It's on the website. Did you look?"
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "I did, I couldn't find it."
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "It's literally the first link under Help. 30 days. Anything else or are we done?"
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "...no, that's it."
+    }
+   ],
+   "intent": "storewide_query/policy_1",
+   "reference": null,
+   "metadata": {
+    "expect": "risk=abusive_agent; quality=low"
+   }
+  },
+  "syn-09-wrong-refusal": {
+   "id": "syn-09-wrong-refusal",
+   "source": "synthetic",
+   "turns": [
+    {
+     "idx": 0,
+     "speaker": "agent",
+     "text": "Hello, how can I help?"
+    },
+    {
+     "idx": 1,
+     "speaker": "customer",
+     "text": "My package was marked delivered 10 days ago and I still don't have it."
+    },
+    {
+     "idx": 2,
+     "speaker": "agent",
+     "text": "Sorry to hear that. Sometimes packages are marked delivered early. Please give it a few more days and check with neighbors."
+    },
+    {
+     "idx": 3,
+     "speaker": "customer",
+     "text": "It's been TEN days. I already checked with neighbors."
+    },
+    {
+     "idx": 4,
+     "speaker": "agent",
+     "text": "I understand. Our policy is to allow time for delivery. Please check back if it hasn't arrived by next week."
+    },
+    {
+     "idx": 5,
+     "speaker": "customer",
+     "text": "This is useless."
+    }
+   ],
+   "intent": "shipping_issue/missing",
+   "reference": "FLOW: Shipping Issue (check our update a shipment of an item)\nSUBFLOW: Missing Item\nAGENT GUIDELINES:\n  1. [Pull up Account] Get Full Name or Account ID for [Pull up Account]\n  2. [Validate Purchase] To confirm that their purchase is valid with [Validate Purchase]:\n       - Username - occasionally, the customer may not remember their username.  In this case, use the Recover Username subflow in the Account Access flow\n       - Email Address\n       - Order ID\n  3. [Record Reason] When shipping items, it can often take a couple days for the product to arrive\n       - Ask how long they have been waiting and enter the number of days into [Record Reason]\n  4. [N/A] If they have been waiting for less than a week (7 days or less), let the customer know that sometimes the package is mistakenly marked as delivered, but can still take a couple days to arrive\n  5. [Update Order] If the customer date has been waiting for a week or longer, let them know that you will ship a new order.\n       - To do this, you will need their address\n       - Enter the full address in one line and then click [Update Order]\n  6. [Make Purchase] Finally resend the package\n       - Ask the customer for the brand and type of the product, such as 'Guess Jeans'\n       - Enter this value into the form\n       - Then click the [Make Purchase] button",
+   "metadata": {
+    "expect": "correctness=contradicted; resolution=unresolved; sentiment down"
+   }
+  }
+ }
+}

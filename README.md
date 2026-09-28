@@ -29,7 +29,8 @@ Data: `data/abcd/` holds ABCD's `abcd_sample.json` (3 convos), `guidelines.json`
 ## Run
 
 ```bash
-# batch review: synthetic set + first 15 ABCD dev conversations -> out/reviews.json
+# batch review: synthetic set + the 3 shipped ABCD samples (up to 15 with the full
+# dataset in data/abcd/) -> out/reviews.json
 python -m cqr.cli review --synthetic data/synthetic.jsonl --abcd data/abcd --limit 15
 
 # force the offline baseline (no API key needed)
@@ -38,7 +39,8 @@ python -m cqr.cli review --synthetic data/synthetic.jsonl --judge heuristic
 # riskiest first
 python -m cqr.cli show
 
-# how did the judge do on the labeled synthetic set
+# how did the judge do on the labeled synthetic set (offline; read only —
+# does NOT call the model. Run `review` above first.)
 python scripts/eval_synthetic.py
 
 # API + dashboard
@@ -53,7 +55,20 @@ pytest                          # 126 tests, ~1s, no network
 coverage run --source=cqr -m pytest && coverage report   # 100% line coverage
 ```
 
-Tests are pure-Python and hermetic: the Anthropic client is stubbed, the store uses `tmp_path`, and the FastAPI endpoints run through `TestClient` against a `HeuristicJudge`. `scripts/eval_synthetic.py` is a separate LLM-behavior eval — it needs `ANTHROPIC_API_KEY` and hits the real model.
+Tests are pure-Python and hermetic: the Anthropic client is stubbed, the store uses `tmp_path`, and the FastAPI endpoints run through `TestClient` against a `HeuristicJudge`. `scripts/eval_synthetic.py` is separate — it scores stored reviews against `metadata.expect`, offline (no model call). Run `python -m cqr.cli review --synthetic data/synthetic.jsonl ...` first.
+
+Synthetic-set eval scores (nine hand-labeled conversations, 22 anchored checks):
+
+| Judge | Model | Rubric | Eval |
+|---|---|---|---|
+| `heuristic` | (regex baseline) | 1.1 | 18/22 |
+| `anthropic` | `claude-sonnet-4-5` | 1.1 | 22/22 |
+
+The anthropic run is committed at `examples/reviews.anthropic.json`. Browse it in the dashboard with no key needed:
+
+```bash
+CQR_STORE=examples/reviews.anthropic.json uvicorn cqr.api:app --reload
+```
 
 ## Contract
 
@@ -118,6 +133,8 @@ Callers should never compute the derived fields themselves — supplied values a
 ### Error behavior
 
 The Anthropic judge validates its own output against `Review` and retries up to twice on malformed JSON before raising `RuntimeError`. `POST /review/batch` collects per-transcript failures into an `errors` array rather than aborting the batch, so partial success is the norm; `reviews` and `errors` are both returned. `POST /review` (single) surfaces the error as a 500 with the exception type and message.
+
+`POST /review` is **idempotent by `id`**: reposting the same transcript id replaces both the stored transcript and its review. `POST /review/batch` is synchronous and processes transcripts serially in the request thread — fine for a demo, but tens of transcripts at anthropic-judge latency will time out at any real HTTP layer. A later change replaces it with an async batch queue.
 
 ### What's stable
 

@@ -1,5 +1,7 @@
 # Conversation Quality Reviewer — Plan
 
+> **Initial design (superseded).** What changed between this plan and the implementation, and why: dropped the composite `overall` score (a risk gate must not be averaged away); dropped *escalation likelihood* (derivable from unresolved + negative sentiment delta + flags); replaced *empathy* with behaviour-anchored *interaction quality*; demoted sentiment to context; added *correctness* against a reference as the signal that catches "happy customer, wrong answer"; one LLM call per conversation instead of five (shared context, cost) with correctness split out as the first thing to separate in production. See `TRADEOFFS.md`.
+
 ## Goal
 Build a small tool that ingests customer-agent conversation transcripts and surfaces 3–5 quality signals per conversation, exposed via a clear contract (API + CLI). Target ~half a day of effort; sharp and partially-built beats broad and unfocused.
 

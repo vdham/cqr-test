@@ -5,3 +5,4 @@ data/abcd/abcd_v1.1.json.gz
 .coverage
 .pytest_cache/
 htmlcov/
+.DS_Store
