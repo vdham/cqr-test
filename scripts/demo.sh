@@ -16,21 +16,24 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 # --- 1. pick a review store the dashboard should show ---------------------------
+# NOTE: the demo persists batch-3 reviews on submit. To keep the committed
+# evidence file pristine we always run against a scratch copy — never the
+# committed examples/reviews.anthropic.json directly.
+mkdir -p out
+SCRATCH_STORE="out/demo-store.json"
 if [ -f "examples/reviews.anthropic.json" ]; then
-  STORE="examples/reviews.anthropic.json"
-  echo "==> using committed LLM eval as the demo store: $STORE"
+  cp "examples/reviews.anthropic.json" "$SCRATCH_STORE"
+  echo "==> demo store (scratch copy of examples/reviews.anthropic.json): $SCRATCH_STORE"
 else
-  STORE="out/reviews.json"
-  echo "==> no examples/reviews.anthropic.json; running heuristic judge to seed $STORE"
-  mkdir -p out
-  python -m cqr.cli review --synthetic data/synthetic.jsonl --judge heuristic --out "$STORE" --fresh >/dev/null 2>&1
+  echo "==> no examples/reviews.anthropic.json; seeding $SCRATCH_STORE with the heuristic judge"
+  python -m cqr.cli review --synthetic data/synthetic.jsonl --judge heuristic --out "$SCRATCH_STORE" --fresh >/dev/null 2>&1
 fi
-export CQR_STORE="$STORE"
+export CQR_STORE="$SCRATCH_STORE"
 
 # --- 2. start the API (unless --no-serve) --------------------------------------
 UVICORN_PID=""
 if [ "${1:-}" != "--no-serve" ]; then
-  echo "==> starting API on port $PORT (store=$STORE)"
+  echo "==> starting API on port $PORT (store=$SCRATCH_STORE)"
   uvicorn cqr.api:app --port "$PORT" --log-level warning >/tmp/cqr-demo.log 2>&1 &
   UVICORN_PID=$!
   trap 'if [ -n "$UVICORN_PID" ]; then kill "$UVICORN_PID" 2>/dev/null || true; fi' EXIT INT TERM
@@ -61,7 +64,16 @@ done
 
 # --- 4. drive a batch through the async job flow -------------------------------
 echo
-echo "==> POST /review/batch?wait=true against tests/fixtures/batch3.json ..."
+# Which judge is actually going to score demo-batch-*? Read /health so the
+# audience sees why demo-batch-* end up `unverifiable` (heuristic doesn't do
+# correctness) vs the syn-* rows above.
+JUDGE_LINE=$(curl -s "$BASE/health" | python -c "
+import json, sys
+h = json.loads(sys.stdin.read())
+model = h.get('model')
+print('judge={}'.format(h['judge']) + (':' + model if model else ''))
+")
+echo "==> POST /review/batch?wait=true  ($JUDGE_LINE)  <-  tests/fixtures/batch3.json"
 RESP=$(curl -sX POST "$BASE/review/batch?wait=true" \
   -H 'Content-Type: application/json' \
   --data-binary @tests/fixtures/batch3.json)
