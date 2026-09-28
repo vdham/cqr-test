@@ -26,5 +26,6 @@ No `ANTHROPIC_API_KEY` → heuristic judge. Never commit `out/` or any file cont
 - Pick the lowest-numbered `specs/*/tasks.md` with unticked items; work top to bottom; tick the box in the same commit as the change.
 - One commit per task group, message prefixed `fix(scope):`, `feat(scope):`, `docs:`, `test:`.
 - Update `STATUS.md` at the end of every session (three lines: done, next, blocked).
+- `git status` is the last command of a session, run *after* any demo or script that could modify state — "nothing to commit" only means something if you check it after the last mutating action.
 - Do not: add a database, queue broker, frontend framework, second provider, or new signals; change the five signals, the tiers, or the one-call design; loosen an invariant to make a test pass.
 - Tests stay hermetic: stub the model client; never call a provider in `tests/`.
