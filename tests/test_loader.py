@@ -2,12 +2,90 @@
 from __future__ import annotations
 
 import json
+import warnings
+from pathlib import Path
 
 import pytest
 
 from cqr.loader import (GuidelineIndex, _abcd_convo_to_transcript, _norm,
-                        dump_jsonl, load_abcd, load_jsonl)
+                        _snake_to_title, dump_jsonl, load_abcd, load_jsonl)
 from cqr.schema import Transcript, Turn
+
+
+# Ground-truth mapping from every kb.json slug to its (flow_key, expected
+# guideline subflow title). This is the canonical set of 55 pairs the loader
+# must resolve correctly. Derived by hand from guidelines.json's structure.
+KB_SLUG_TO_FLOW_AND_SUBFLOW = {
+    # Product Defect
+    "refund_initiate": ("product_defect", "Initiate Refund"),
+    "refund_update":   ("product_defect", "Update Refund"),
+    "refund_status":   ("product_defect", "Refund Status"),
+    "return_stain":    ("product_defect", "Return Due to Stain"),
+    "return_color":    ("product_defect", "Return Due to Color"),
+    "return_size":     ("product_defect", "Return Due to Size"),
+    # Order Issue
+    "status_mystery_fee":    ("order_issue", "Status Mystery Fee"),
+    "status_delivery_time":  ("order_issue", "Status Delivery Time"),
+    "status_payment_method": ("order_issue", "Status Payment Method"),
+    "status_quantity":       ("order_issue", "Status Quantity"),
+    "manage_upgrade":        ("order_issue", "Manage Upgrade"),
+    "manage_downgrade":      ("order_issue", "Manage Downgrade"),
+    "manage_create":         ("order_issue", "Manage Create"),
+    "manage_cancel":         ("order_issue", "Manage Cancel"),
+    # Account Access
+    "recover_username": ("account_access", "Recover Username"),
+    "recover_password": ("account_access", "Recover Password"),
+    "reset_2fa":        ("account_access", "Reset Two-Factor Auth"),
+    # Troubleshoot Site
+    "credit_card":    ("troubleshoot_site", "Invalid Credit Card"),
+    "shopping_cart":  ("troubleshoot_site", "Cart Not Updating"),
+    "search_results": ("troubleshoot_site", "Search Not Working"),
+    "slow_speed":     ("troubleshoot_site", "Website Too Slow"),
+    # Manage Account
+    "status_service_added":    ("manage_account", "Status Service Added"),
+    "status_service_removed":  ("manage_account", "Status Service Removed"),
+    "status_shipping_question": ("manage_account", "Status Shipping Question"),
+    "status_credit_missing":   ("manage_account", "Status Credit Missing"),
+    "manage_change_address":   ("manage_account", "Manage Change Address"),
+    "manage_change_name":      ("manage_account", "Manage Change Name"),
+    "manage_change_phone":     ("manage_account", "Manage Change Phone"),
+    "manage_payment_method":   ("manage_account", "Manage Payment Method"),
+    # Purchase Dispute
+    "bad_price_competitor":            ("purchase_dispute", "Bad Price Competitor"),
+    "bad_price_yesterday":             ("purchase_dispute", "Bad Price Yesterday"),
+    "out_of_stock_general":            ("purchase_dispute", "Out-of-Stock General"),
+    "out_of_stock_one_item":           ("purchase_dispute", "Out-of-Stock One Item"),
+    "promo_code_invalid":              ("purchase_dispute", "Promo Code Invalid"),
+    "promo_code_out_of_date":          ("purchase_dispute", "Promo Code Out of Date"),
+    "mistimed_billing_already_returned": ("purchase_dispute", "Mistimed Billing Already Returned"),
+    "mistimed_billing_never_bought":     ("purchase_dispute", "Mistimed Billing Never Bought"),
+    # Shipping Issue
+    "status":  ("shipping_issue", "Shipping Status"),
+    "manage":  ("shipping_issue", "Manage Shipping"),
+    "missing": ("shipping_issue", "Missing Item"),
+    "cost":    ("shipping_issue", "Shipping Cost"),
+    # Subscription Inquiry
+    "status_active":       ("subscription_inquiry", "Status Active"),
+    "status_due_amount":   ("subscription_inquiry", "Status Due Amount"),
+    "status_due_date":     ("subscription_inquiry", "Status Due Date"),
+    "manage_pay_bill":     ("subscription_inquiry", "Manage Pay Bill"),
+    "manage_extension":    ("subscription_inquiry", "Manage Extension"),
+    "manage_dispute_bill": ("subscription_inquiry", "Manage Dispute Bill"),
+    # Single-Item Query
+    "boots":  ("single_item_query", "Boots FAQ"),
+    "shirt":  ("single_item_query", "Shirt FAQ"),
+    "jeans":  ("single_item_query", "Jeans FAQ"),
+    "jacket": ("single_item_query", "Jacket FAQ"),
+    # Storewide Query
+    "pricing":    ("storewide_query", "Pricing FAQ"),
+    "membership": ("storewide_query", "Membership FAQ"),
+    "timing":     ("storewide_query", "Timing FAQ"),
+    "policy":     ("storewide_query", "Policy FAQ"),
+}
+
+
+def _real_gi():
+    return GuidelineIndex(json.loads(Path("data/abcd/guidelines.json").read_text()))
 
 
 # --------------------------------------------------------------------- _norm ----
@@ -22,53 +100,69 @@ class TestNorm:
     def test_strips_punctuation(self):
         assert _norm("out-of-stock (general)") == {"out", "stock", "general"}
 
+    def test_status_is_not_stripped(self):
+        # `status` used to be a stopword; keeping it is what fixes refund_status.
+        assert "status" in _norm("Refund Status")
+        assert "status" in _norm("refund_status")
+
+    def test_manage_is_not_stripped(self):
+        assert "manage" in _norm("Manage Change Address")
+
+
+class TestSnakeToTitle:
+    def test_basic(self):
+        assert _snake_to_title("refund_status") == "Refund Status"
+
+    def test_single_word(self):
+        assert _snake_to_title("manage") == "Manage"
+
+    def test_all_capitalized(self):
+        assert _snake_to_title("manage_change_address") == "Manage Change Address"
+
+    def test_handles_empty(self):
+        assert _snake_to_title("") == ""
+
 
 # ------------------------------------------------------------- GuidelineIndex ----
 
 class TestGuidelineIndex:
-    def test_alias_hit_wins_over_fuzzy(self, guidelines_dict):
+    def test_exact_match_wins(self, guidelines_dict):
         gi = GuidelineIndex(guidelines_dict)
-        # "return_size" is in ALIASES => "Return Due to Size" exact.
-        text = gi.reference_for("product_defect", "return_size")
-        assert text is not None
-        assert "SUBFLOW: Return Due to Size" in text
-
-    def test_fuzzy_fallback_via_token_overlap(self, guidelines_dict):
-        gi = GuidelineIndex(guidelines_dict)
-        # "refund_status" not in ALIASES; should fuzzy-match "Refund Status".
+        # `refund_status` -> Title Case `Refund Status` matches directly, no alias needed.
         text = gi.reference_for("product_defect", "refund_status")
         assert text is not None
         assert "SUBFLOW: Refund Status" in text
 
+    def test_alias_hit_when_exact_misses(self, guidelines_dict):
+        gi = GuidelineIndex(guidelines_dict)
+        # "return_size" Title Case would be "Return Size", not in guidelines; alias -> "Return Due to Size".
+        text = gi.reference_for("product_defect", "return_size")
+        assert text is not None
+        assert "SUBFLOW: Return Due to Size" in text
+
     def test_flow_key_mapping(self, guidelines_dict):
         gi = GuidelineIndex(guidelines_dict)
-        # snake_case flow -> Title Case in guidelines.
         text = gi.reference_for("account_access", "reset_2fa")
         assert text is not None
         assert "FLOW: Account Access" in text
         assert "SUBFLOW: Reset Two-Factor Auth" in text
 
-    def test_unknown_flow_still_fuzzy_matches_all_subflows(self, guidelines_dict):
+    def test_unknown_flow_falls_back_to_all_subflows(self, guidelines_dict):
         gi = GuidelineIndex(guidelines_dict)
-        # Bogus flow key; should still fuzzy match across all subflows for "refund status".
         text = gi.reference_for("mystery_flow", "refund_status")
         assert text is not None
         assert "Refund Status" in text
 
-    def test_no_subflow_match_returns_none(self, guidelines_dict):
+    def test_empty_subflow_returns_none(self, guidelines_dict):
         gi = GuidelineIndex(guidelines_dict)
-        assert gi.reference_for("product_defect", "no_such_subflow_ever_xyz") is None or True  # fuzzy may still return best
-        # Force a truly-unmatchable input (empty after normalization):
-        result = gi.reference_for("mystery_flow", "")
-        # Either None or best-effort — we only assert no crash on unknown input.
-        assert result is None or isinstance(result, str)
+        assert gi.reference_for("mystery_flow", "") is None
 
     def test_reference_text_includes_actions_and_subtext(self, guidelines_dict):
         gi = GuidelineIndex(guidelines_dict)
         text = gi.reference_for("product_defect", "return_size")
         assert "[Pull up Account] Get name." in text
         assert "[Validate Purchase] Confirm order." in text
-        assert "- Username" in text  # subtext bullet
+        assert "- Username" in text
         assert "- Email" in text
 
     def test_load_from_path(self, tmp_path, guidelines_dict):
@@ -76,6 +170,64 @@ class TestGuidelineIndex:
         p.write_text(json.dumps(guidelines_dict))
         gi = GuidelineIndex.load(p)
         assert gi.reference_for("product_defect", "return_size") is not None
+
+    def test_load_with_kb_path(self, tmp_path, guidelines_dict):
+        gp = tmp_path / "g.json"
+        kp = tmp_path / "kb.json"
+        gp.write_text(json.dumps(guidelines_dict))
+        kp.write_text(json.dumps({"refund_status": ["a", "b"]}))
+        gi = GuidelineIndex.load(gp, kb_path=kp)
+        assert gi.valid_slugs == {"refund_status"}
+
+    def test_load_with_missing_kb_path_is_ok(self, tmp_path, guidelines_dict):
+        gp = tmp_path / "g.json"
+        gp.write_text(json.dumps(guidelines_dict))
+        gi = GuidelineIndex.load(gp, kb_path=tmp_path / "missing.json")
+        assert gi.valid_slugs is None
+
+    def test_fuzzy_fallback_when_no_exact_or_alias(self, guidelines_dict):
+        # `refund` alone: no title-case match in guidelines, not in ALIASES.
+        # Falls through to fuzzy overlap, which picks some Refund subflow.
+        gi = GuidelineIndex(guidelines_dict)
+        hit = gi._find_subflow("product_defect", "refund")
+        assert hit is not None
+        assert "Refund" in hit[1]
+
+
+class TestSlugValidation:
+    def test_unknown_slug_emits_warning(self, guidelines_dict):
+        gi = GuidelineIndex(guidelines_dict, valid_slugs={"return_size"})
+        with pytest.warns(UserWarning, match="unknown ABCD subflow slug"):
+            gi.reference_for("product_defect", "not_a_real_slug")
+
+    def test_known_slug_no_warning(self, guidelines_dict):
+        gi = GuidelineIndex(guidelines_dict, valid_slugs={"return_size"})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            gi.reference_for("product_defect", "return_size")
+
+    def test_no_valid_slugs_no_warning(self, guidelines_dict):
+        gi = GuidelineIndex(guidelines_dict, valid_slugs=None)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            gi.reference_for("product_defect", "anything_at_all")
+
+
+@pytest.mark.parametrize("slug,expected", [
+    (slug, (flow, sub)) for slug, (flow, sub) in KB_SLUG_TO_FLOW_AND_SUBFLOW.items()
+])
+class TestRealAbcdSlugResolution:
+    """Every kb.json slug must resolve to the correct guideline subflow. This
+    is a regression on the whole guideline-lookup layer; adding a new alias or
+    changing _norm without adjusting for these pairs will fail here."""
+
+    def test_resolves_to_expected_subflow(self, slug, expected):
+        flow_key, expected_subflow = expected
+        hit = _real_gi()._find_subflow(flow_key, slug)
+        assert hit is not None, f"{slug} resolved to None"
+        assert hit[1] == expected_subflow, (
+            f"{slug} resolved to {hit[1]!r}, expected {expected_subflow!r}"
+        )
 
 
 # ---------------------------------------------------- _abcd_convo_to_transcript ----

@@ -37,6 +37,7 @@ Consumable three ways: `POST /review` (one transcript → review), `POST /review
 - **Voice.** Nothing here handles ASR errors, overlapping speech, or silence, all of which affect effort and sentiment.
 - **Versioning.** The rubric is the product. It needs a version stamped on every review and a regression suite so a prompt edit does not silently shift every score.
 - **Storage, auth, PII.** JSON file → a table; no auth; transcripts contain PII and are stored raw. Redact before the judge sees them.
+- **Procedure adherence via ABCD's own labels.** `kb.json` currently gates only subflow-slug validation. It also carries the canonical action sequence per subflow, and ABCD's `delexed[].targets` records the action each agent turn was taking. Restricted to unconditional verification steps (pull-up-account, validate-purchase), diffing the observed against the expected sequence gives a deterministic `missing_disclosure` detector that never guesses — a natural companion to the LLM correctness signal, not a replacement.
 
 ## What I'd measure to know it's working
 
