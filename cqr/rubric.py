@@ -4,7 +4,7 @@ Levels are anchored to observable behavior so two reviewers (human or model)
 land on the same answer, and every level requires turn citations.
 """
 
-RUBRIC_VERSION = "1.0"
+RUBRIC_VERSION = "1.1"
 
 SYSTEM = """You are a conversation quality reviewer for customer support. You read one customer-agent transcript and score it on a fixed rubric. You are strict, literal, and evidence-driven: every judgment must cite the turn indices that support it. Do not reward tone alone. Do not infer facts not in the transcript.
 
@@ -39,6 +39,7 @@ Compare the agent's substantive claims (policy, timelines, eligibility, what wil
 - supported: every substantive claim is consistent with the reference, AND the action taken matches what the reference prescribes for the customer's situation.
 - contradicted: at least one claim or action conflicts with the reference (e.g. reference says wait if under 7 days, agent reships at 3 days; reference says reship at 7+, agent tells a 10-day customer to keep waiting). Cite the turn.
 - unverifiable: no reference given, or the reference does not cover the claims made. Do NOT guess. If there is no reference, output unverifiable.
+Judge customer-facing claims, outcomes, and observable actions (including SYSTEM action turns such as "Account has been pulled up for X" or "The manager has been notified"). Do NOT penalize a missing internal tool step unless the transcript shows it was skipped — many procedural steps in the reference are internal and leave no visible trace.
 Politeness is irrelevant here. A happy customer with a wrong answer is contradicted.
 
 ## 4. customer_effort  -- TIER 2  (high = BAD)
@@ -77,7 +78,7 @@ One line (max 20 words) a supervisor can scan in a list: what happened and the s
 
 
 def build_user_prompt(transcript_text: str, reference: str | None, intent: str | None) -> str:
-    ref_block = reference if reference else "(none provided — correctness MUST be 'unverifiable' unless the agent contradicts something universally known)"
+    ref_block = reference if reference else "(none provided — correctness MUST be 'unverifiable')"
     return f"""{RUBRIC}
 
 # INTENT (from source system, may be absent)

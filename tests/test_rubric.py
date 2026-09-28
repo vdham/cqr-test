@@ -1,7 +1,7 @@
 """Rubric prompt construction."""
 from __future__ import annotations
 
-from cqr.rubric import RUBRIC, SYSTEM, build_user_prompt
+from cqr.rubric import RUBRIC, RUBRIC_VERSION, SYSTEM, build_user_prompt
 
 
 class TestBuildUserPrompt:
@@ -15,6 +15,13 @@ class TestBuildUserPrompt:
         p = build_user_prompt("...", reference=None, intent="x")
         assert "(none provided" in p
         assert "unverifiable" in p
+
+    def test_missing_reference_no_universally_known_clause(self):
+        # C1: prompt and _finalize invariant must agree — no-reference always
+        # means unverifiable. The old "unless universally known" escape hatch
+        # let the LLM contradict the invariant.
+        p = build_user_prompt("...", reference=None, intent=None)
+        assert "universally known" not in p
 
     def test_reference_present_included_verbatim(self):
         ref = "AGENT GUIDELINES: reship after 7 days."
@@ -48,3 +55,16 @@ class TestRubricContent:
     def test_deterministic_emission_rule_present(self):
         # The rule we added: one flag per (type, severity).
         assert "(type, severity)" in RUBRIC
+
+    def test_correctness_scoped_to_observable(self):
+        # C1: correctness §3 must instruct the judge to treat internal tool
+        # steps as unverifiable rather than penalize their absence.
+        assert "SYSTEM" in RUBRIC
+        assert "internal tool step" in RUBRIC
+
+
+class TestRubricVersion:
+    def test_is_a_semver_style_string(self):
+        assert isinstance(RUBRIC_VERSION, str)
+        parts = RUBRIC_VERSION.split(".")
+        assert all(p.isdigit() for p in parts)

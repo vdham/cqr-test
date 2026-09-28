@@ -53,7 +53,8 @@ class TestFinalize:
         assert r.source == sample_transcript.source
         assert r.intent == sample_transcript.intent
         assert r.judge == "anthropic:test-model"
-        assert r.rubric_version == "1.0"
+        from cqr.rubric import RUBRIC_VERSION
+        assert r.rubric_version == RUBRIC_VERSION
 
     def test_no_reference_forces_unverifiable(self, sample_transcript):
         assert sample_transcript.reference is None
