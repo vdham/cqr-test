@@ -18,7 +18,7 @@ Every signal returns `{level, rationale, turns}`. Derived fields (`needs_human_r
 ## Setup
 
 ```bash
-git clone https://github.com/vdham/cqr-asapp && cd cqr-asapp
+git clone https://github.com/vdham/cqr-test && cd cqr-test
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 export ANTHROPIC_API_KEY=...        # omit to use the offline regex baseline judge
