@@ -6,6 +6,7 @@ _Last updated: 2026-09-28 — by: Vikram_
 |---|---|---|---|
 | [001-fixes](specs/001-fixes/tasks.md) | Close the review findings: contract enforcement, guideline lookup, rubric, docs | **done** (`b7c8d5e`..`daee7b3`) | — |
 | [002-batch-litellm](specs/002-batch-litellm/tasks.md) | Async batch jobs with bounded queue; LiteLLM judge with classified errors; hardened error contract | **done** (`0773603`, `a94396a`, `2587866`) | — |
+| [003-hardening](specs/003-hardening/tasks.md) | Port eight practices from sibling repo: CI evidence, licensing, README shape, timed demo, prompt caching, structured outputs, content-addressed identity, stale detection | **in progress** | A: CI workflow + badge |
 
 ## Done this session
 - Runner lazy-starts on first `POST /review/batch` if lifespan hasn't; the 429 branch is now for real `QueueFull` only. Matrix and tests updated.
