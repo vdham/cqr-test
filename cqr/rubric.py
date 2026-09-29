@@ -4,7 +4,7 @@ Levels are anchored to observable behavior so two reviewers (human or model)
 land on the same answer, and every level requires turn citations.
 """
 
-RUBRIC_VERSION = "1.2"
+RUBRIC_VERSION = "1.3"
 
 SYSTEM = """You are a conversation quality reviewer for customer support. You read one customer-agent transcript and score it on a fixed rubric. You are strict, literal, and evidence-driven: every judgment must cite the turn indices that support it. Do not reward tone alone. Do not infer facts not in the transcript.
 
@@ -76,6 +76,24 @@ One line (max 20 words) a supervisor can scan in a list: what happened and the s
 }
 """
 
+# Compact tail used when the caller sends `response_format=json_schema`.
+# The provider enforces shape; the prose schema block above is redundant
+# and just consumes tokens.
+_RUBRIC_STRUCTURED_TAIL = "Return a JSON object matching the provided schema."
+
+
+def _rubric_body(structured: bool) -> str:
+    """Return the rubric body sized to the caller. When `structured=True`,
+    strip the "# OUTPUT JSON SCHEMA" prose block (the provider is enforcing
+    the shape) and replace with a one-line reminder."""
+    if not structured:
+        return RUBRIC
+    tag = "# OUTPUT JSON SCHEMA"
+    idx = RUBRIC.find(tag)
+    if idx == -1:
+        return RUBRIC
+    return RUBRIC[:idx].rstrip() + "\n\n" + _RUBRIC_STRUCTURED_TAIL + "\n"
+
 
 def _supports_prompt_caching(model: str | None) -> bool:
     """Anthropic recognises `cache_control` blocks on messages; other
@@ -88,18 +106,19 @@ def _supports_prompt_caching(model: str | None) -> bool:
 
 
 def build_messages(transcript_text: str, reference: str | None, intent: str | None,
-                   model: str | None = None) -> list[dict]:
+                   model: str | None = None, structured_output: bool = False) -> list[dict]:
     """Return LiteLLM messages structured so the cacheable prefix (SYSTEM
     plus RUBRIC, and the REFERENCE block) is stable across calls and the
     transcript is always last. On providers that support `cache_control`,
     the prefix is marked ephemeral so a batch of conversations sharing the
     same rubric+reference reuses the cache after the first call.
 
-    For providers without prompt caching the same content is sent as a plain
-    string; the ordering guarantees are preserved (reference before transcript)
-    so callers can rely on it independent of the provider."""
+    When `structured_output=True`, the "# OUTPUT JSON SCHEMA" prose section
+    is dropped (the caller is passing `response_format=json_schema` and the
+    provider is enforcing the shape) — saves a couple of hundred tokens per
+    call. Otherwise the prose schema is included as the fallback path."""
     supports_cache = _supports_prompt_caching(model)
-    system_text = SYSTEM + "\n\n" + RUBRIC
+    system_text = SYSTEM + "\n\n" + _rubric_body(structured_output)
     ref_block_text = (
         f"# REFERENCE (policy / guidelines the agent should follow)\n{reference}"
         if reference

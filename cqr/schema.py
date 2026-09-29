@@ -297,6 +297,23 @@ class BatchAccepted(BaseModel):
     total: int
 
 
+class JudgeOutput(BaseModel):
+    """The model-facing subset of Review — the fields the LLM actually
+    produces. Provenance (`judge`, `rubric_version`, `transcript_id`, …) and
+    derived fields (`needs_human_review`, `sentiment_delta`, `warnings`)
+    are set by `_finalize` after the model returns, so exposing them to the
+    model would let it lie to us. `JudgeOutput.model_json_schema()` is
+    passed as `response_format` to LiteLLM for providers that support
+    JSON-schema-constrained decoding."""
+    risk_flags: list[RiskFlag] = Field(default_factory=list)
+    resolution: ResolutionResult
+    correctness: CorrectnessResult
+    customer_effort: Level3Result
+    interaction_quality: Level3Result
+    sentiment_trajectory: list[SentimentPoint] = Field(default_factory=list)
+    summary: str = Field(default="")
+
+
 # --------------------------------------------------------------- errors ----
 
 class ErrorBody(BaseModel):

@@ -70,6 +70,22 @@ class TestRubricVersion:
         assert all(p.isdigit() for p in parts)
 
 
+class TestRubricBody:
+    def test_structured_path_drops_prose_schema(self):
+        from cqr.rubric import _rubric_body
+        assert "# OUTPUT JSON SCHEMA" in _rubric_body(structured=False)
+        assert "# OUTPUT JSON SCHEMA" not in _rubric_body(structured=True)
+        assert "Return a JSON object matching the provided schema." in _rubric_body(structured=True)
+
+    def test_structured_body_defensive_when_marker_absent(self, monkeypatch):
+        """If a future rubric edit drops the # OUTPUT JSON SCHEMA marker,
+        `_rubric_body(True)` returns the rubric unchanged rather than
+        blowing up. Guards against a silent prompt regression."""
+        from cqr import rubric
+        monkeypatch.setattr(rubric, "RUBRIC", "# SIGNALS\n(no output block here)\n")
+        assert rubric._rubric_body(structured=True) == "# SIGNALS\n(no output block here)\n"
+
+
 class TestBuildMessagesCaching:
     """Prompt-caching structure: on Anthropic models, system+rubric and the
     reference block carry cache_control ephemeral so batches sharing a

@@ -33,8 +33,8 @@ from pydantic import ValidationError
 from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
                      JudgeUnavailable, TranscriptRejected)
 from .rubric import RUBRIC_VERSION, SYSTEM, build_messages, build_user_prompt
-from .schema import (Correctness, Level3, Resolution, Review, RiskFlag, RiskFlagType,
-                     SentimentPoint, SignalResult, Transcript, Usage)
+from .schema import (Correctness, JudgeOutput, Level3, Resolution, Review, RiskFlag,
+                     RiskFlagType, SentimentPoint, SignalResult, Transcript, Usage)
 
 
 _SIGNAL_KEYS = ("resolution", "correctness", "customer_effort", "interaction_quality")
@@ -188,21 +188,58 @@ class LLMJudge:
         self.max_output_retries = max_output_retries
         self.name = f"llm:{self.model}"
 
+    def _response_format(self) -> dict:
+        """OpenAI-style structured-output payload. LiteLLM proxies this to
+        Anthropic (via tool-use) and to OpenAI-compatible providers natively.
+        Providers that don't support it raise UnsupportedParamsError, which
+        we catch once and fall back from — the text-and-prose-schema path
+        still works."""
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "review",
+                "schema": JudgeOutput.model_json_schema(),
+                "strict": True,
+            },
+        }
+
     def judge(self, t: Transcript) -> Review:
         import litellm
-        messages = build_messages(t.render(), t.reference, t.intent, model=self.model)
+        # Try structured output first. If the provider rejects response_format,
+        # fall back to the prose-schema path (`structured_output=False`) once.
+        try:
+            return self._judge_once(
+                t, structured_output=True,
+                response_format=self._response_format(),
+            )
+        except litellm.exceptions.UnsupportedParamsError:
+            return self._judge_once(t, structured_output=False, response_format=None)
+
+    def _judge_once(self, t: Transcript, *, structured_output: bool,
+                    response_format: dict | None) -> Review:
+        import litellm
+        messages = build_messages(t.render(), t.reference, t.intent,
+                                  model=self.model,
+                                  structured_output=structured_output)
         last_err: Exception | None = None
         for attempt in range(self.max_output_retries + 1):
+            kwargs: dict = {
+                "model": self.model,
+                "max_tokens": 2000,
+                "temperature": 0,
+                "timeout": float(os.environ.get("CQR_LLM_TIMEOUT_S", "60")),
+                "num_retries": int(os.environ.get("CQR_LLM_RETRIES", "2")),
+                "api_base": os.environ.get("CQR_LLM_BASE_URL") or None,
+                "messages": messages,
+            }
+            if response_format is not None:
+                kwargs["response_format"] = response_format
             try:
-                msg = litellm.completion(
-                    model=self.model,
-                    max_tokens=2000,
-                    temperature=0,
-                    timeout=float(os.environ.get("CQR_LLM_TIMEOUT_S", "60")),
-                    num_retries=int(os.environ.get("CQR_LLM_RETRIES", "2")),
-                    api_base=os.environ.get("CQR_LLM_BASE_URL") or None,
-                    messages=messages,
-                )
+                msg = litellm.completion(**kwargs)
+            except litellm.exceptions.UnsupportedParamsError:
+                # Bubble up to the outer judge() so it can fall back on the
+                # very first attempt without burning retries.
+                raise
             except Exception as exc:
                 raise _classify_litellm_error(exc, attempts=attempt + 1) from exc
 

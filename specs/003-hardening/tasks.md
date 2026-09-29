@@ -32,13 +32,13 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] TRADEOFFS §Cost — two sentences on what is cached and why intent grouping matters
 
 ## F. Structured outputs — commit `feat(judge): schema-constrained model output`  → `<pending>`
-- [ ] `JudgeOutput` Pydantic model = model-facing subset of `Review` (risk_flags, four signal results, sentiment_trajectory, summary)
-- [ ] `LLMJudge.judge()` passes `response_format={"type": "json_schema", ...}` with `JudgeOutput.model_json_schema()`, `strict: True`
-- [ ] On `UnsupportedParamsError` (or provider rejection), fall back to the current text-only path once with a warning
-- [ ] `_extract_json` + validation + `max_output_retries` unchanged, still active for the fallback
-- [ ] Rubric: shorten "# OUTPUT JSON SCHEMA" prose to one sentence when `response_format` is in use; keep prose for fallback path
-- [ ] Bump `RUBRIC_VERSION` (prompt text changed)
-- [ ] Tests: schema is passed; unsupported-params triggers fallback; `JudgeOutput.model_json_schema()` contains all four level enums
+- [x] `JudgeOutput` Pydantic model = model-facing subset of `Review` (risk_flags, four signal results, sentiment_trajectory, summary) — no provenance/derived fields
+- [x] `LLMJudge.judge()` passes `response_format={"type": "json_schema", ...}` with `JudgeOutput.model_json_schema()`, `strict: True`
+- [x] On `UnsupportedParamsError`, fall back to text-only path once (`structured_output=False`) with the full prose schema
+- [x] `_extract_json` + validation + `max_output_retries` unchanged, still active for the fallback
+- [x] Rubric: `_rubric_body(structured=True)` strips the "# OUTPUT JSON SCHEMA" prose and replaces with one line; prose kept for fallback
+- [x] `RUBRIC_VERSION` bumped to 1.3
+- [x] Tests: response_format shape + all level enums in the schema; provenance fields NOT in JudgeOutput schema; UnsupportedParamsError triggers fallback; structured path prompt drops the prose block
 
 ## G. Content-addressed identity + `schema_version` — commit `feat(schema): transcript digest, schema version, content-based idempotency`  → `<pending>`
 - [ ] `SCHEMA_VERSION = "1.0"` in `cqr/schema.py`; `Review.schema_version: str`

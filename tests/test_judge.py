@@ -413,6 +413,64 @@ class TestLLMJudge:
         assert calls[0]["timeout"] == 45.5
         assert calls[0]["num_retries"] == 7
 
+    def test_response_format_passed_with_json_schema(self, sample_transcript, monkeypatch):
+        """Structured-output payload includes the JudgeOutput schema."""
+        calls = self._install_mock(monkeypatch, [valid_review_json()])
+        LLMJudge(model="m").judge(sample_transcript)
+        rf = calls[0]["response_format"]
+        assert rf["type"] == "json_schema"
+        assert rf["json_schema"]["name"] == "review"
+        assert rf["json_schema"]["strict"] is True
+        # Schema contains the level enums.
+        schema_str = json.dumps(rf["json_schema"]["schema"])
+        assert "supported" in schema_str  # correctness enum
+        assert "contradicted" in schema_str
+        assert "unauthorized_promise" in schema_str  # risk-flag enum
+        # Provenance fields must NOT be in the model-facing schema.
+        for name in ("judge", "rubric_version", "transcript_id", "warnings",
+                     "needs_human_review", "sentiment_delta", "job_id"):
+            assert name not in rf["json_schema"]["schema"].get("properties", {}), \
+                f"{name} leaked into JudgeOutput schema"
+
+    def test_fallback_when_provider_rejects_response_format(self, sample_transcript, monkeypatch):
+        """UnsupportedParamsError on the first call falls back to the
+        text-only path; still yields a valid Review."""
+        import litellm
+        call_log: list[dict] = []
+
+        def completion(**kwargs):
+            call_log.append(kwargs)
+            if "response_format" in kwargs:
+                raise litellm.exceptions.UnsupportedParamsError(
+                    message="model does not support response_format",
+                    model="m",
+                    llm_provider="test",
+                )
+            return _mock_litellm_completion([valid_review_json()])[0](**kwargs)
+
+        monkeypatch.setattr(litellm, "completion", completion)
+        r = LLMJudge(model="m").judge(sample_transcript)
+        # Two calls: one with response_format (rejected), one without (accepted).
+        assert len(call_log) == 2
+        assert "response_format" in call_log[0]
+        assert "response_format" not in call_log[1]
+        assert r.transcript_id == sample_transcript.id
+
+    def test_structured_path_uses_short_rubric_tail(self, sample_transcript, monkeypatch):
+        """Structured-output prompt drops the '# OUTPUT JSON SCHEMA' block."""
+        calls = self._install_mock(monkeypatch, [valid_review_json()])
+        LLMJudge(model="claude-sonnet-4-5").judge(sample_transcript)
+        # System text on Anthropic is a list of blocks; the first block carries
+        # SYSTEM + rubric. On structured path it must NOT contain the prose
+        # schema section header.
+        sys_content = calls[0]["messages"][0]["content"]
+        if isinstance(sys_content, list):
+            sys_text = sys_content[0]["text"]
+        else:
+            sys_text = sys_content
+        assert "# OUTPUT JSON SCHEMA" not in sys_text
+        assert "Return a JSON object matching the provided schema." in sys_text
+
 
 class TestClassifyLiteLLMError:
     """Every provider-shaped exception maps to the right JudgeError subclass."""
