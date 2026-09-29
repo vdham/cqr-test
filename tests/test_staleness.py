@@ -41,36 +41,72 @@ class TestIsStalePure:
         monkeypatch.setattr(schema, "SCHEMA_VERSION", "9.9")
         assert is_stale(r)
 
-    def test_guideline_change_marks_stale(self, guidelines_dict):
-        gi_old = GuidelineIndex(guidelines_dict)
-        t = Transcript(id="a", source="abcd",
-                       intent="product_defect/refund_status",
-                       reference=gi_old.reference_for("product_defect", "refund_status"),
-                       turns=[Turn(idx=0, speaker="agent", text="hi"),
-                              Turn(idx=1, speaker="customer", text="?")])
+    def test_id_resolved_review_stale_when_guideline_version_changes(self, guidelines_dict, monkeypatch, tmp_path):
+        """Score a review via reference_id, mutate the guideline, is_stale
+        should say True — because reference_resolution=='id' and the current
+        index reports a different Reference.version for that id."""
+        # Set up the live index to point at a mutable temp file.
+        p = tmp_path / "guidelines.json"
+        p.write_text(json.dumps(guidelines_dict))
+        monkeypatch.setenv("CQR_GUIDELINES", str(p))
+        from cqr.loader import _reset_index_for_tests
+        _reset_index_for_tests()
+        # Score with reference_id (uses the initial index).
+        t = _t("id-review", intent=None)
+        t.reference_id = "product_defect/refund_status"
         r = HeuristicJudge().judge(t)
-        # Mutate a guideline text -> resolved hash differs.
+        assert r.reference_resolution == "id"
+        assert not is_stale(r)  # nothing has changed yet
+        # Mutate the guideline text -> new version.
         new_dict = json.loads(json.dumps(guidelines_dict))
-        new_dict["Product Defect"]["subflows"]["Refund Status"]["actions"][0]["text"] = "MUTATED — a totally different rule."
-        gi_new = GuidelineIndex(new_dict)
-        assert is_stale(r, transcript=t, guidelines=gi_new)
-        assert not is_stale(r, transcript=t, guidelines=gi_old)
+        new_dict["Product Defect"]["subflows"]["Refund Status"]["actions"][0]["text"] = "MUTATED"
+        p.write_text(json.dumps(new_dict))
+        _reset_index_for_tests()
+        assert is_stale(r)
 
-    def test_inline_only_reference_never_stale_via_guideline_path(self, guidelines_dict):
-        """Transcript has an inline reference and no matching intent — the
-        guideline-based check has nothing to compare against."""
-        gi = GuidelineIndex(guidelines_dict)
+    def test_intent_resolved_review_stale_similarly(self, guidelines_dict, monkeypatch, tmp_path):
+        """Same, but resolution came from intent — still uses reference_id
+        set at _finalize time to check current version."""
+        p = tmp_path / "guidelines.json"
+        p.write_text(json.dumps(guidelines_dict))
+        monkeypatch.setenv("CQR_GUIDELINES", str(p))
+        from cqr.loader import _reset_index_for_tests
+        _reset_index_for_tests()
+        t = _t("intent-review", intent="product_defect/refund_status")
+        r = HeuristicJudge().judge(t)
+        assert r.reference_resolution == "intent"
+        assert not is_stale(r)
+        new_dict = json.loads(json.dumps(guidelines_dict))
+        new_dict["Product Defect"]["subflows"]["Refund Status"]["actions"][0]["text"] = "MUTATED"
+        p.write_text(json.dumps(new_dict))
+        _reset_index_for_tests()
+        assert is_stale(r)
+
+    def test_inline_only_reference_never_stale_via_guideline_path(self, guidelines_dict, monkeypatch, tmp_path):
+        """Inline references stay never-stale — the stored transcript
+        already carries them, so what was scored is what still exists."""
+        p = tmp_path / "guidelines.json"
+        p.write_text(json.dumps(guidelines_dict))
+        monkeypatch.setenv("CQR_GUIDELINES", str(p))
+        from cqr.loader import _reset_index_for_tests
+        _reset_index_for_tests()
         t = _t("a", reference="inline policy text", intent=None)
         r = HeuristicJudge().judge(t)
-        assert not is_stale(r, transcript=t, guidelines=gi)
+        assert r.reference_resolution == "inline"
+        # Even after mutating every guideline in the index:
+        p.write_text(json.dumps({"Empty Flow": {"subflows": {}}}))
+        _reset_index_for_tests()
+        assert not is_stale(r)
 
-    def test_intent_unknown_to_guidelines_is_not_stale(self, guidelines_dict):
-        """If the intent doesn't resolve in the current guideline set, no
-        conclusion can be drawn — don't mark stale."""
-        gi = GuidelineIndex(guidelines_dict)
-        t = _t("a", intent="mystery/unknown", reference="some policy")
+    def test_no_reference_id_no_reference_check(self, monkeypatch, tmp_path):
+        """A resolution=='none' review has no reference_id to check — the
+        reference-based check must NOT fire."""
+        from cqr.loader import _reset_index_for_tests
+        _reset_index_for_tests()
+        t = _t("a", intent=None)  # no reference, no id, no intent
         r = HeuristicJudge().judge(t)
-        assert not is_stale(r, transcript=t, guidelines=gi)
+        assert r.reference_resolution == "none"
+        assert not is_stale(r)
 
 
 class TestLoadGuidelines:

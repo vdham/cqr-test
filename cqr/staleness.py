@@ -23,21 +23,32 @@ from typing import Optional
 
 from . import rubric as _rubric  # for _rubric.RUBRIC_VERSION read at call time
 from . import schema as _schema  # for _schema.SCHEMA_VERSION read at call time
-from .loader import GuidelineIndex
+from .loader import GuidelineIndex, get_index
 from .schema import Review, Transcript, reference_version
 
 
 def is_stale(review: Review, transcript: Optional[Transcript] = None,
              guidelines: Optional[GuidelineIndex] = None) -> bool:
+    """A review is stale when the world has drifted since it was scored:
+    schema version bumped, rubric version bumped, or the reference it was
+    scored against has a new version in the current index.
+
+    The reference check only fires when the review was scored via an
+    `id` or `intent` resolution — inline references are baked into the
+    stored transcript, so their meaning doesn't drift on its own.
+    `transcript` is accepted for API compat but not used (spec 004 keys
+    the reference check off `review.reference_id`, not the transcript's
+    intent — see specs/004 §D)."""
+    del transcript  # kept for signature compatibility with pre-004 callers
     if review.schema_version != _schema.SCHEMA_VERSION:
         return True
     if review.rubric_version != _rubric.RUBRIC_VERSION:
         return True
-    if guidelines is not None and transcript is not None and transcript.intent:
-        flow, _, subflow = transcript.intent.partition("/")
-        current_ref = guidelines.reference_for(flow, subflow)
-        if current_ref is not None:
-            if reference_version(current_ref) != review.reference_version:
+    if review.reference_resolution in ("id", "intent") and review.reference_id:
+        gi = guidelines if guidelines is not None else get_index()
+        if gi is not None:
+            current = gi.get(review.reference_id)
+            if current is not None and current.version != review.reference_version:
                 return True
     return False
 

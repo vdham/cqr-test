@@ -239,9 +239,21 @@ review.model_dump()
 Other endpoints:
 - `POST /review/batch` `{transcripts: [...]}` — accepts up to `CQR_MAX_BATCH`, returns 202 with `{job_id, status, total}`. Use `?wait=true` to block up to `CQR_BATCH_WAIT_S` and get the completed `Job` back. `Idempotency-Key` header dedupes replays. See the accept-then-poll example under Run.
 - `GET /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/reviews` — job state, per-item errors, and the resulting reviews (riskiest first).
-- `GET /reviews?needs_human_review=&source=&job_id=` — filter the persisted set.
+- `GET /reviews?needs_human_review=&source=&job_id=&stale=` — filter the persisted set.
 - `GET /reviews/{id}` — transcript + review pair.
-- `GET /health` — liveness (no provider call). Reports which judge is live and, for LLM, which model.
+- `GET /guidelines` and `GET /guidelines/{flow_key}/{subflow_key}` — enumerate the reference set and fetch a single `Reference` (see below).
+- `GET /health` — liveness (no provider call). Reports which judge is live, how many reviews are stale, and the current guideline index size + version.
+
+### References
+
+Every conversation is judged against a policy reference. Three ways to supply one; the server tries them in this order, and records which one won in `Review.reference_resolution`:
+
+1. **Inline text** — `Transcript.reference` set to the policy string. Wins over everything else. `reference_resolution: "inline"`. Fine for one-off uploads or for policies not in the canonical index.
+2. **By canonical id** (preferred) — `Transcript.reference_id: "shipping_issue/missing"`. Server resolves via `GET /guidelines/{flow_key}/{subflow_key}` at scoring time. `reference_resolution: "id"`. **Unknown ids return 422 `TranscriptRejected`** — no tokens spent. Best for batches: the reference text is looked up once, cache-hits stay warm across items in the same intent, and spec 003 §H's stale detection knows when the underlying guideline was edited.
+3. **By intent** (advisory) — `Transcript.intent: "shipping_issue/missing"` with no inline text and no `reference_id`. Server treats intent as a hint and does the same server-side lookup. `reference_resolution: "intent"`. **Unknown intents fall through to `none`** (intent is not authoritative; you can supply a made-up one and the review still runs, just as `correctness: unverifiable`).
+4. **None** — `reference_resolution: "none"`, `correctness: unverifiable`. Every other signal still scores.
+
+`Review.reference_id` (the id used, when resolution was `id`/`intent`) and `Review.reference_version` (12-hex of the exact text the judge saw — matches the `version` on `GET /guidelines/{id}`) let a caller trace a review back to the policy it was scored against.
 
 ### Invariants
 

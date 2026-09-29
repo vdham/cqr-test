@@ -147,7 +147,15 @@ async function open(id) {
     <div id="transcript">${t.turns.map(x=>`<div class="t ${x.speaker}" id="turn-${x.idx}"><span class="i">${x.idx}</span><span class="s">${x.speaker}</span><span>${esc(x.text)}</span></div>`).join('')}</div>
 
     <div class="tier">Reference the agent was judged against</div>
-    <div class="ref">${t.reference ? esc(t.reference) : '(none — correctness is unverifiable for this conversation)'}</div>
+    <div class="meta" style="color:var(--muted); margin-bottom:6px">
+      ${r.reference_resolution === 'id' || r.reference_resolution === 'intent'
+        ? `resolution <code>${esc(r.reference_resolution)}</code> · <a href="/guidelines/${esc(r.reference_id)}"><code>${esc(r.reference_id)}</code></a> · version <code>${esc(r.reference_version)}</code>`
+        : r.reference_resolution === 'inline'
+          ? `resolution <code>inline</code> · version <code>${esc(r.reference_version)}</code>`
+          : `resolution <code>none</code> — correctness is <b>unverifiable</b>`}
+      ${r.stale ? ` · <span class="b red">stale — guideline changed</span>` : ''}
+    </div>
+    <div class="ref">${t.reference ? esc(t.reference) : '(server-side reference; fetch from the /guidelines link above)'}</div>
     ${warns}
   `;
   document.querySelectorAll('[data-turn]').forEach(a => a.onclick = () => {

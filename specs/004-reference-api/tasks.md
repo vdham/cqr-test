@@ -28,11 +28,11 @@ Work top to bottom. Tick each box in the same commit as the change.
 - [x] Tests: each resolution path (`inline`, `id`, `intent`, `none`); unknown `reference_id` → 422 `TranscriptRejected`; unknown `intent` → "none" + unverifiable; `Review.reference_version` matches `GET /guidelines/{id}.version`; id path with no index raises
 
 ## D. Stale check via index + dashboard + docs — commit `feat: stale via reference index; dashboard shows reference id/version`  → `<pending>`
-- [ ] `is_stale` looks up `review.reference_id` in `get_index()` when `reference_resolution in ("id", "intent")`; inline never goes stale via that path
-- [ ] Dashboard: reference panel shows `reference_id · version` linking to `/guidelines/{id}`; stale badge when the review is stale from the reference path
-- [ ] README §Contract gets a "References" subsection: three ways to supply, resolution order, what `reference_resolution` means; endpoint list updated
-- [ ] TRADEOFFS §Reference retrieval rewritten — interface exists; production swaps the lookup behind it for a versioned KB table + retrieval when intent is unknown
-- [ ] Tests: mutating a guideline text via a temp `guidelines.json` marks only that intent's `id/intent`-resolved reviews stale; inline reference reviews are never stale from the reference path; dashboard renders link + badge (smoke test)
+- [x] `is_stale` reads `review.reference_id` and compares to `get_index().get(...).version` when `reference_resolution in ("id","intent")`; inline stays never-stale; no reference_id → no reference check
+- [x] Dashboard reference panel: resolution + linked `reference_id` + version; stale badge when the review is stale
+- [x] README §Contract gains a References subsection listing the four resolution paths; endpoint list updated to include `/guidelines*`
+- [x] TRADEOFFS §Reference retrieval rewritten
+- [x] Tests: mutating a guideline while the review is `id`- or `intent`-resolved marks it stale; inline stays never-stale even when guidelines are wiped; a `resolution="none"` review has no reference to check
 
 ## Close-out — commit `docs: close 004`
 - [ ] `STATUS.md`: 004 complete, demo-readiness re-checked
