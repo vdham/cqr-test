@@ -8,9 +8,9 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] README badge at the top of the file, pointing at the workflow on `main`
 
 ## B. LICENSE + third-party notices — commit `docs: add license and ABCD attribution`  → `<pending>`
-- [ ] `LICENSE` — MIT, copyright "Vikram Dham" 2026
-- [ ] `THIRD_PARTY_NOTICES.md` — one entry for ABCD (`asappresearch/abcd`) listing the files we redistribute and reproducing the upstream license text (or a flagged placeholder if the upstream is unreachable)
-- [ ] README §Setup: one line pointing at `THIRD_PARTY_NOTICES.md`
+- [x] `LICENSE` — MIT, copyright "Vikram Dham" 2026
+- [x] `THIRD_PARTY_NOTICES.md` — one entry for ABCD (`asappresearch/abcd`) listing the files we redistribute and reproducing the upstream license text (MIT, verified via GitHub Licenses API)
+- [x] README §Setup: one line pointing at `THIRD_PARTY_NOTICES.md`
 
 ## C. README shape — commit `docs(readme): expected output, reading order, deliberate scope`  → `<pending>`
 - [ ] **Quick start**: an "Expected output" block that is the trimmed real output of `scripts/demo.sh` (~25 lines)

@@ -30,6 +30,8 @@ The judge is LiteLLM-backed (`cqr/judge.py::LLMJudge`) so any provider LiteLLM s
 
 Data: `data/abcd/` holds ABCD's `abcd_sample.json` (3 convos), `guidelines.json`, `kb.json`. For more ABCD conversations drop `abcd_v1.1.json.gz` from https://github.com/asappresearch/abcd into `data/abcd/` and the loader picks it up. `data/synthetic.jsonl` has nine deliberately problematic transcripts (regenerate with `python scripts/make_synthetic.py data/abcd`).
 
+Third-party redistributions and their licenses are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
 ## Run
 
 ```bash
