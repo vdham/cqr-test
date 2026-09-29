@@ -3,6 +3,13 @@
 ## Unreleased
 - (nothing queued)
 
+## 0.6 — 2026-09-29
+- specs/004-reference-api complete — references become a first-class HTTP resource + server-side resolution:
+  - **A** (`6426bf3`) `Reference` Pydantic model + `GuidelineIndex.list()`/`get(reference_id)` (strict-id, rejects cross-flow fuzzy matches) + `get_index()` module singleton reading `$CQR_GUIDELINES`.
+  - **B** (`abaff4b`) `GET /guidelines` (55-row index, no text) + `GET /guidelines/{flow_key}/{subflow_key}` (full `Reference` | 404 `ErrorBody`); `/health` gains a `guidelines: {count, source, index_version}` block; error-contract matrix + drift-tracking middleware updated for the two new routes.
+  - **C** (`c2bc53b`) `Transcript.reference_id`, `resolve_reference()` with order `inline > id > intent > none` (unknown `reference_id` → 422 `TranscriptRejected`, unknown intent → `"none"`); `Review.reference_id` + `Review.reference_resolution` on every review; OpenAPI examples restructured (minimal / by_reference_id / inline_reference).
+  - **D** (`b83f858`) `is_stale` uses `get_index()` for id/intent-resolved reviews; dashboard reference panel shows resolution + `reference_id` (linked to `/guidelines/{id}`) + `version` + a stale badge when the guideline has drifted; README §Contract gets a References subsection; TRADEOFFS §Reference retrieval rewritten (the interface now exists; production swaps the lookup behind it).
+
 ## 0.5 — 2026-09-28
 - specs/003-hardening complete — eight practices for a demo repo that's cheaper to run and more credible:
   - **A** (`ac72033`) GitHub Actions CI: pytest + `coverage report --fail-under=100` on push/PR/dispatch; README badge on `main`.

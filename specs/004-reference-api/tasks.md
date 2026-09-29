@@ -35,13 +35,13 @@ Work top to bottom. Tick each box in the same commit as the change.
 - [x] Tests: mutating a guideline while the review is `id`- or `intent`-resolved marks it stale; inline stays never-stale even when guidelines are wiped; a `resolution="none"` review has no reference to check
 
 ## Close-out — commit `docs: close 004`
-- [ ] `STATUS.md`: 004 complete, demo-readiness re-checked
-- [ ] `CHANGELOG.md`: new session entry listing A–D
-- [ ] Fresh-clone acceptance: `scripts/demo.sh` runs to completion; `git status` clean after
+- [x] `STATUS.md`: 004 complete, demo-readiness re-checked
+- [x] `CHANGELOG.md`: `0.6` entry listing A–D
+- [x] Fresh-clone acceptance: `scripts/demo.sh` runs to completion; `git status` clean after
 
 ## Acceptance
-- [ ] `pytest` green; `coverage report --fail-under=100`
-- [ ] `curl localhost:8000/guidelines | jq length` → 55; `.../guidelines/shipping_issue/missing | jq .version` → 12 hex; `.../guidelines/nope/nope` → 404 ErrorBody
-- [ ] `POST /review` with `{"reference_id": "shipping_issue/missing", ...}` and no `reference` → `reference_resolution: "id"`, `reference_version` matches step above, `correctness.rationale` doesn't say "no reference"
-- [ ] `POST /review` with intent only → `"intent"`; with neither → `"none"` + `correctness.level == "unverifiable"`
-- [ ] Error-contract status set unchanged (`200,202,404,413,422,429,500,502,503`); middleware test passes with the two new routes
+- [x] `pytest` green (426 tests); `coverage report --fail-under=100` passes
+- [x] `curl localhost:8000/guidelines | jq length` → 55; `.../guidelines/shipping_issue/missing | jq .version` → 12 hex; `.../guidelines/nope/nope` → 404 ErrorBody
+- [x] `POST /review` with `{"reference_id": "shipping_issue/missing"}` and no `reference` → `reference_resolution: "id"`, `reference_version` matches, `correctness` scored against the resolved text
+- [x] `POST /review` with intent only → `"intent"`; with neither → `"none"` + `correctness.level == "unverifiable"`
+- [x] Error-contract status set unchanged (`200,202,404,413,422,429,500,502,503`); middleware test passes with the two new routes
