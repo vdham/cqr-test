@@ -31,6 +31,7 @@ from .judge import get_judge
 from .loader import load_abcd, load_jsonl
 from .rubric import RUBRIC_VERSION
 from .schema import Review, Transcript, reference_version, sort_key
+from .staleness import is_stale, load_guidelines
 from .store import Store
 
 
@@ -147,6 +148,19 @@ def cmd_review(args) -> int:
     return 0
 
 
+def _annotate_stale_list(store: Store, reviews: list[Review]) -> list[Review]:
+    gi = load_guidelines()
+    out: list[Review] = []
+    for r in reviews:
+        hit = store.get(r.transcript_id)
+        transcript = hit[0] if hit else None
+        if is_stale(r, transcript=transcript, guidelines=gi):
+            out.append(r.model_copy(update={"stale": True}))
+        else:
+            out.append(r)
+    return out
+
+
 def cmd_show(args) -> int:
     store = Store(Path(args.path))
     rs = store.all()
@@ -154,16 +168,69 @@ def cmd_show(args) -> int:
         rs = [r for r in rs if r.needs_human_review]
     if args.source:
         rs = [r for r in rs if r.source == args.source]
+    rs = _annotate_stale_list(store, rs)
     rs = sorted(rs, key=sort_key)
+    stale_count = sum(1 for r in rs if r.stale)
 
     if args.json:
         json.dump([r.model_dump(mode="json") for r in rs], sys.stdout, indent=2)
         sys.stdout.write("\n")
         return 0
 
+    print(f"{len(rs)} reviews, {stale_count} stale", file=sys.stderr)
     for r in rs:
         flag = "!" if r.needs_human_review else " "
-        print(f"{flag} {r.transcript_id:28s} risk={r.max_risk} res={r.resolution.level.value:22s} corr={r.correctness.level.value:13s} | {r.summary}")
+        stale_marker = " (stale)" if r.stale else ""
+        print(f"{flag} {r.transcript_id:28s} risk={r.max_risk} res={r.resolution.level.value:22s} corr={r.correctness.level.value:13s}{stale_marker} | {r.summary}")
+    return 0
+
+
+def cmd_rereview(args) -> int:
+    """Re-run the judge for stale reviews (or all with --all), bypassing the
+    content cache. Replaces stored reviews in place; the store is flushed at
+    the end. Same exit-code contract as `review`."""
+    store = Store(Path(args.path))
+    judge = get_judge(args.judge)
+
+    all_reviews = store.all()
+    if args.all:
+        targets = all_reviews
+    else:
+        gi = load_guidelines()
+        targets = [r for r in all_reviews
+                   if is_stale(r, transcript=(store.get(r.transcript_id) or (None, None))[0],
+                                  guidelines=gi)]
+    if not targets:
+        print("nothing to rereview", file=sys.stderr)
+        return 0
+    print(f"judge={judge.name}  rereview={len(targets)}  out={args.path}", file=sys.stderr)
+    errors = 0
+    t0 = time.time()
+    for r in targets:
+        hit = store.get(r.transcript_id)
+        if hit is None:
+            errors += 1
+            print(f"x {r.transcript_id}: transcript missing from store", file=sys.stderr)
+            continue
+        t, _ = hit
+        try:
+            new_r = judge.judge(t)
+        except JudgeRejected as e:
+            store.flush()
+            print(f"x {t.id}: JudgeRejected: {e}", file=sys.stderr)
+            print("stopping: judge rejected the request (config-scope). Fix credentials or model and retry.", file=sys.stderr)
+            sys.exit(3)
+        except Exception as e:  # noqa: BLE001
+            errors += 1
+            print(f"x {t.id}: {type(e).__name__}: {e}", file=sys.stderr)
+            continue
+        store.put(t, new_r)
+        flag = "!" if new_r.needs_human_review else " "
+        print(f"{flag} {t.id:28s} rescored", file=sys.stderr)
+    store.flush()
+    print(f"done: {len(targets) - errors} rescored, {errors} failed, {time.time() - t0:.1f}s", file=sys.stderr)
+    if errors:
+        sys.exit(1)
     return 0
 
 
@@ -198,6 +265,17 @@ def main(argv=None) -> int:
     s.add_argument("--source", help="filter to one source: abcd | synthetic | upload | ...")
     s.add_argument("--json", action="store_true", help="emit the sorted list as JSON to stdout")
     s.set_defaults(fn=cmd_show)
+
+    re = sub.add_parser("rereview",
+                        help="re-run the judge for stored reviews that have gone stale")
+    re.add_argument("path", nargs="?", default="out/reviews.json")
+    group = re.add_mutually_exclusive_group()
+    group.add_argument("--stale", action="store_true",
+                       help="rereview only reviews the current rubric/schema/guidelines mark stale (default)")
+    group.add_argument("--all", action="store_true",
+                       help="rereview every stored review, stale or not")
+    re.add_argument("--judge", choices=["llm", "heuristic", "anthropic"], default=None)
+    re.set_defaults(fn=cmd_rereview)
 
     args = p.parse_args(argv)
     return args.fn(args)

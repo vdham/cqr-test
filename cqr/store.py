@@ -43,7 +43,10 @@ class Store:
         self._index(t.id, r)
 
     def get(self, id_: str) -> tuple[Transcript, Review] | None:
-        if id_ in self._reviews:
+        # Orphan defensively: a store where a review lost its transcript (or
+        # vice versa) shouldn't crash callers — return None so callers can
+        # decide (e.g. `rereview` counts it as a per-item failure).
+        if id_ in self._reviews and id_ in self._transcripts:
             return self._transcripts[id_], self._reviews[id_]
         return None
 

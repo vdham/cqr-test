@@ -50,13 +50,14 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] Tests: digest determinism + stability under key reordering + independence from `metadata`; same content twice → cache_hit=True + judge NOT called; changing one character bypasses; `force=true` bypasses; find() scoped by rubric/reference/judge; pre-versioning reviews not indexed; JobRunner cache-hits skip judge; CLI `--force` cycles scored/cached correctly
 
 ## H. Stale-review detection — commit `feat: stale reviews and rereview`  → `<pending>`
-- [ ] `Review.stale: bool = False` (persisted default False; computed True at read time)
-- [ ] Stale rule: `review.schema_version != SCHEMA_VERSION` OR `review.rubric_version != RUBRIC_VERSION` OR (intent resolvable AND resolved reference hash != review.reference_version)
-- [ ] `GET /reviews?stale=true` filter; `stale_count` field in `GET /health` response
-- [ ] `cqr show` shows a stale count in its header; `cqr show --json` includes `stale` on each review
-- [ ] `cqr rereview [--stale] [--all] [--judge …]` — re-runs the judge (bypassing content cache), replaces reviews; exit codes match `review`
-- [ ] Tests: monkeypatch `RUBRIC_VERSION` → all reviews stale; temp `guidelines.json` change → only that intent's reviews stale; `rereview --stale` (heuristic) clears the flag
-- [ ] TRADEOFFS §Versioning: replace the "needs a version stamped" line with what now exists (three versions per review, stale detection, rereview)
+- [x] `Review.stale: bool = False` (persisted default False; annotated True at read time by the API/CLI)
+- [x] `cqr/staleness.py::is_stale(review, transcript, guidelines)` implements the three-way rule (schema/rubric/reference); `load_guidelines()` reads `$CQR_GUIDELINES_PATH` or `data/abcd/guidelines.json`
+- [x] `GET /reviews?stale=true|false` filter; `stale_count` + `reviews` count on `GET /health`
+- [x] `cqr show` header prints `N reviews, M stale`; each stale row is marked `(stale)`; `cqr show --json` includes `stale` on each record
+- [x] `cqr rereview [path] [--stale|--all] [--judge …]` — re-runs the judge (bypasses cache since Store.find isn't consulted), replaces stored reviews, exit codes: 0 clean · 1 per-item failure · 3 JudgeRejected
+- [x] Tests: rubric-version bump marks all stale; schema-version bump marks all stale; guideline text change marks only that intent's reviews stale; inline references never stale via the guideline path; unknown intent never stale; `/reviews?stale=` filter both directions; `/health` stale_count; `cqr show` stale header; `cqr rereview --stale` clears the flag; `cqr rereview --all`; `JudgeRejected` → exit 3; per-item failure → exit 1; orphaned review → exit 1
+- [x] Refactor: `_finalize` and `is_stale` now read `rubric.RUBRIC_VERSION` / `schema.SCHEMA_VERSION` at call time so a single monkeypatch bumps the version everywhere consistently
+- [x] TRADEOFFS §Versioning rewritten: three versions per review, stale detection, rereview — with a note that an automated LLM regression suite is the next step
 
 ## Invariant test + close-out — commit `test: name the model-cannot-override invariant; docs: close 003`  → `<pending>`
 - [ ] `tests/test_invariants.py` — feed `_finalize` model outputs that set `needs_human_review`, `sentiment_delta`, and `correctness` (no-reference case) to wrong values; assert computed Review ignores all three; assert digest/version fields do not depend on model output

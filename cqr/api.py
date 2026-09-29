@@ -33,6 +33,7 @@ from .judge import get_judge
 from .rubric import RUBRIC_VERSION
 from .schema import (BatchAccepted, BatchReviewRequest, ErrorBody, Job, Review,
                      Transcript, reference_version, sort_key)
+from .staleness import is_stale, load_guidelines
 from .store import Store
 
 
@@ -363,6 +364,19 @@ def get_job_reviews(id_: str):
     return sorted(_runner.reviews_for(id_), key=sort_key)
 
 
+def _annotate_stale(reviews: list[Review]) -> list[Review]:
+    """Compute `stale` at read time and return copies with the flag set.
+    Never mutates stored reviews."""
+    gi = load_guidelines()
+    out: list[Review] = []
+    for r in reviews:
+        hit = _store.get(r.transcript_id)
+        transcript = hit[0] if hit else None
+        stale = is_stale(r, transcript=transcript, guidelines=gi)
+        out.append(r.model_copy(update={"stale": stale}) if stale else r)
+    return out
+
+
 @app.get("/reviews", response_model=list[Review], tags=["reviews"],
          summary="List stored reviews, riskiest first",
          responses=ERROR_RESPONSES["list_reviews"])
@@ -370,6 +384,7 @@ def list_reviews(
     needs_human_review: bool | None = Query(default=None),
     source: str | None = None,
     job_id: str | None = Query(default=None, description="Filter to reviews produced by one batch job."),
+    stale: bool | None = Query(default=None, description="Filter by staleness (computed at read time from the current SCHEMA_VERSION, RUBRIC_VERSION, and guidelines)."),
 ):
     """Return persisted reviews, sorted by risk descending."""
     rs = _store.all()
@@ -379,6 +394,9 @@ def list_reviews(
         rs = [r for r in rs if r.source == source]
     if job_id:
         rs = [r for r in rs if r.job_id == job_id]
+    rs = _annotate_stale(rs)
+    if stale is not None:
+        rs = [r for r in rs if r.stale == stale]
     return sorted(rs, key=sort_key)
 
 
@@ -404,11 +422,20 @@ def health():
         or os.environ.get("OPENAI_API_KEY")
         or os.environ.get("CQR_LLM_BASE_URL")
     ) else "heuristic")
+    gi = load_guidelines()
+    stale_count = sum(
+        1 for r in _store.all()
+        if is_stale(r,
+                    transcript=(_store.get(r.transcript_id) or (None, None))[0],
+                    guidelines=gi)
+    )
     return {
         "status": "ok",
         "judge": judge_env,
         "model": os.environ.get("CQR_MODEL", "claude-sonnet-4-5") if judge_env == "llm" else None,
         "runner_started": _runner is not None,
+        "reviews": len(_store.all()),
+        "stale_count": stale_count,
     }
 
 

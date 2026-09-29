@@ -32,9 +32,11 @@ from pydantic import ValidationError
 
 from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
                      JudgeUnavailable, TranscriptRejected)
-from .rubric import RUBRIC_VERSION, SYSTEM, build_messages, build_user_prompt
+from . import rubric as _rubric  # for _rubric.RUBRIC_VERSION read at call time
+from . import schema as _schema  # for _schema.SCHEMA_VERSION read at call time
+from .rubric import SYSTEM, build_messages, build_user_prompt
 from .schema import (Correctness, JudgeOutput, Level3, Resolution, Review, RiskFlag,
-                     RiskFlagType, SCHEMA_VERSION, SentimentPoint, SignalResult,
+                     RiskFlagType, SentimentPoint, SignalResult,
                      Transcript, Usage, reference_version)
 
 
@@ -72,8 +74,8 @@ def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
     raw["source"] = t.source
     raw["intent"] = t.intent
     raw["judge"] = judge_name
-    raw["rubric_version"] = RUBRIC_VERSION
-    raw["schema_version"] = SCHEMA_VERSION
+    raw["rubric_version"] = _rubric.RUBRIC_VERSION
+    raw["schema_version"] = _schema.SCHEMA_VERSION
     raw["transcript_digest"] = t.digest()
     raw["reference_version"] = reference_version(t.reference)
 

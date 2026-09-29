@@ -220,6 +220,7 @@ class Review(BaseModel):
     transcript_digest: str = Field(default="", description="sha256 of the transcript's content (id, source, intent, reference, turns). Empty for pre-versioning reviews.")
     reference_version: str = Field(default="", description="12-hex sha256 of the reference text, or 'none' when no reference. Empty for pre-versioning reviews.")
     cache_hit: bool = Field(default=False, description="Per-response flag: True when this review was served from the content cache (same digest + rubric + reference + judge as a prior call). Never persisted True.")
+    stale: bool = Field(default=False, description="Per-response flag: True when the review was scored against an older SCHEMA_VERSION, RUBRIC_VERSION, or a reference that has since changed. Computed at read time; never persisted True.")
     needs_human_review: bool = Field(default=False, description="True when any risk flag is medium+ or correctness is contradicted. Always present — set by the Review validator.")
     summary: str = Field(default="", description="One line a supervisor can read in a list view")
 
