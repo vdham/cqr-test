@@ -24,6 +24,17 @@ SCRATCH_STORE="out/demo-store.json"
 if [ -f "examples/reviews.anthropic.json" ]; then
   cp "examples/reviews.anthropic.json" "$SCRATCH_STORE"
   echo "==> demo store (scratch copy of examples/reviews.anthropic.json): $SCRATCH_STORE"
+  # Summarise the LLM evidence: how many reviews, what did they cost.
+  python -c "
+import json
+d = json.load(open('$SCRATCH_STORE'))
+n = len(d['reviews'])
+cost = sum((r.get('usage') or {}).get('cost_usd', 0.0) for r in d['reviews'].values())
+cache_read = sum((r.get('usage') or {}).get('cache_read_input_tokens', 0) for r in d['reviews'].values())
+input_toks = sum((r.get('usage') or {}).get('input_tokens', 0) for r in d['reviews'].values())
+pct = int(round(100 * cache_read / input_toks)) if input_toks else 0
+print(f'    committed LLM evidence: {n} reviews, total cost \${cost:.6f}, {pct}% input tokens from prompt cache')
+"
 else
   echo "==> no examples/reviews.anthropic.json; seeding $SCRATCH_STORE with the heuristic judge"
   python -m cqr.cli review --synthetic data/synthetic.jsonl --judge heuristic --out "$SCRATCH_STORE" --fresh >/dev/null 2>&1
@@ -80,8 +91,15 @@ RESP=$(curl -sX POST "$BASE/review/batch?wait=true" \
 echo "$RESP" | python -c "
 import json, sys
 job = json.loads(sys.stdin.read())
+usage = job.get('usage') or {}
 print('   job_id     =', job['id'])
 print('   status     = {}  ({}/{})'.format(job['status'], job['completed'], job['total']))
+print('   cost_usd   = \${:.6f}  (input={}  output={}  cache_read={})'.format(
+    usage.get('cost_usd', 0.0),
+    usage.get('input_tokens', 0),
+    usage.get('output_tokens', 0),
+    usage.get('cache_read_input_tokens', 0),
+))
 if job.get('errors'):
     print('   errors     =', [(e['transcript_id'], e['error_type']) for e in job['errors']])
 "

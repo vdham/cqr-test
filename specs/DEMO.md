@@ -22,9 +22,9 @@ Total budget: ~4:30, leaving 5+ minutes of the 10-minute Part 2 slot for tradeof
 scripts/demo.sh
 ```
 
-**Say**: "One command, no key needed. It copies the LLM eval to a scratch store so a demo run never dirties the committed evidence file — a habit I learned by shipping it wrong once."
+**Say**: "One command, no key needed. It copies the LLM eval to a scratch store so a demo run never dirties the committed evidence file — a habit I learned by shipping it wrong once. Notice the second line: the committed evidence was scored for **$0.074** with 80% of input tokens served from the prompt cache — that's the E/G/H trio doing its work."
 
-**Notice**: the URLs that print. Dashboard, `/docs`, `/health`, three interesting review links. This is the surface a developer would find first.
+**Notice**: the URLs that print. Dashboard, `/docs`, `/health`, three interesting review links. This is the surface a developer would find first. And that cost line: `committed LLM evidence: 9 reviews, total cost $0.074126, 80% input tokens from prompt cache`.
 
 ---
 
