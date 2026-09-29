@@ -19,8 +19,8 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] **Design principles** — a numbered list of five items
 
 ## D. Timed demo script — commit `docs: add specs/DEMO.md`  → `<pending>`
-- [ ] `specs/DEMO.md` — five sections with timestamps summing to ~4:30; each section has *click / say / notice*
-- [ ] README Reading order links to `specs/DEMO.md`
+- [x] `specs/DEMO.md` — five sections with timestamps summing to ~4:30; each section has *click / say / notice*
+- [x] README Reading order links to `specs/DEMO.md`
 
 ## E. Prompt caching + intent-sorted batches — commit `feat(judge): cacheable prompt prefix; batches ordered by intent`  → `<pending>`
 - [ ] `build_user_prompt` restructured: system = `SYSTEM + RUBRIC` (one block, `cache_control: {"type": "ephemeral"}`); user = `[reference (cache_control), intent + transcript (uncached)]`
