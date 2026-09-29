@@ -23,13 +23,13 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] README Reading order links to `specs/DEMO.md`
 
 ## E. Prompt caching + intent-sorted batches — commit `feat(judge): cacheable prompt prefix; batches ordered by intent`  → `<pending>`
-- [ ] `build_user_prompt` restructured: system = `SYSTEM + RUBRIC` (one block, `cache_control: {"type": "ephemeral"}`); user = `[reference (cache_control), intent + transcript (uncached)]`
-- [ ] Guard `cache_control` for providers that ignore/reject it (try/except or model-prefix check)
-- [ ] `JobRunner.submit()` and `cli.py review` sort each batch by `(intent or "", id)` before enqueue/run
-- [ ] `Review.usage` (input/output tokens, cache_read, cache_creation, cost_usd); `Job.usage` sum
-- [ ] Dashboard meta line + `cqr show --json` include `cost_usd`
-- [ ] Tests: stub sees `cache_control` on system, reference precedes transcript, intent-sorted dispatch
-- [ ] TRADEOFFS §Cost — two sentences on what is cached and why intent grouping matters
+- [x] New `build_messages(...)` returns LiteLLM messages with `SYSTEM + RUBRIC` and the reference block marked `cache_control: {"type": "ephemeral"}` on Anthropic; plain-string form on other providers
+- [x] Model-prefix guard (`_supports_prompt_caching`) so non-Anthropic providers never see `cache_control`
+- [x] `JobRunner.submit()` and `cli review` sort by `(intent or "", id)` before enqueue/run
+- [x] `Usage` schema; `Review.usage` (input/output tokens, cache_read/creation, cost_usd); `Job.usage` is the sum
+- [x] Dashboard meta line renders `cost $X` when set; `cqr show --json` includes `usage` via `.model_dump(mode="json")`
+- [x] Tests: `build_messages` structure on Anthropic vs non-Anthropic, reference-before-transcript ordering, intent-ordered dispatch through JobRunner, per-review usage summed into per-job usage
+- [x] TRADEOFFS §Cost — two sentences on what is cached and why intent grouping matters
 
 ## F. Structured outputs — commit `feat(judge): schema-constrained model output`  → `<pending>`
 - [ ] `JudgeOutput` Pydantic model = model-facing subset of `Review` (risk_flags, four signal results, sentiment_trajectory, summary)

@@ -131,7 +131,7 @@ async function open(id) {
 
   $('#detail').innerHTML = `
     <h2 style="margin:0">${r.needs_human_review?'⚠ ':''}${esc(t.id)}</h2>
-    <div class="meta" style="color:var(--muted)">source ${esc(t.source)} · intent ${esc(t.intent||'—')} · judge <code>${esc(r.judge)}</code> · rubric <code>${esc(r.rubric_version||'?')}</code>${r.job_id ? ` · job <code>${esc(r.job_id)}</code>` : ''} · sentiment Δ ${r.sentiment_delta>0?'+':''}${r.sentiment_delta}</div>
+    <div class="meta" style="color:var(--muted)">source ${esc(t.source)} · intent ${esc(t.intent||'—')} · judge <code>${esc(r.judge)}</code> · rubric <code>${esc(r.rubric_version||'?')}</code>${r.job_id ? ` · job <code>${esc(r.job_id)}</code>` : ''}${r.usage && r.usage.cost_usd ? ` · cost $${r.usage.cost_usd.toFixed(6)}` : ''} · sentiment Δ ${r.sentiment_delta>0?'+':''}${r.sentiment_delta}</div>
     <p style="margin:8px 0 0">${esc(r.summary||'')}</p>
 
     <div class="tier">Tier 1 · must know</div>

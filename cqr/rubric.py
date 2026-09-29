@@ -4,7 +4,7 @@ Levels are anchored to observable behavior so two reviewers (human or model)
 land on the same answer, and every level requires turn citations.
 """
 
-RUBRIC_VERSION = "1.1"
+RUBRIC_VERSION = "1.2"
 
 SYSTEM = """You are a conversation quality reviewer for customer support. You read one customer-agent transcript and score it on a fixed rubric. You are strict, literal, and evidence-driven: every judgment must cite the turn indices that support it. Do not reward tone alone. Do not infer facts not in the transcript.
 
@@ -77,7 +77,60 @@ One line (max 20 words) a supervisor can scan in a list: what happened and the s
 """
 
 
+def _supports_prompt_caching(model: str | None) -> bool:
+    """Anthropic recognises `cache_control` blocks on messages; other
+    providers ignore or reject them. Only enable caching where it actually
+    helps."""
+    if not model:
+        return False
+    m = model.lower()
+    return m.startswith("claude") or m.startswith("anthropic/")
+
+
+def build_messages(transcript_text: str, reference: str | None, intent: str | None,
+                   model: str | None = None) -> list[dict]:
+    """Return LiteLLM messages structured so the cacheable prefix (SYSTEM
+    plus RUBRIC, and the REFERENCE block) is stable across calls and the
+    transcript is always last. On providers that support `cache_control`,
+    the prefix is marked ephemeral so a batch of conversations sharing the
+    same rubric+reference reuses the cache after the first call.
+
+    For providers without prompt caching the same content is sent as a plain
+    string; the ordering guarantees are preserved (reference before transcript)
+    so callers can rely on it independent of the provider."""
+    supports_cache = _supports_prompt_caching(model)
+    system_text = SYSTEM + "\n\n" + RUBRIC
+    ref_block_text = (
+        f"# REFERENCE (policy / guidelines the agent should follow)\n{reference}"
+        if reference
+        else "# REFERENCE\n(none provided — correctness MUST be 'unverifiable')"
+    )
+    tail_text = (
+        f"# INTENT (from source system, may be absent)\n{intent or '(unknown)'}\n\n"
+        f"# TRANSCRIPT\n{transcript_text}\n\nReturn the JSON object now."
+    )
+
+    if supports_cache:
+        return [
+            {"role": "system", "content": [
+                {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "text", "text": ref_block_text, "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": tail_text},
+            ]},
+        ]
+    # Plain-string form for providers without cache_control.
+    return [
+        {"role": "system", "content": system_text},
+        {"role": "user", "content": f"{ref_block_text}\n\n{tail_text}"},
+    ]
+
+
 def build_user_prompt(transcript_text: str, reference: str | None, intent: str | None) -> str:
+    """Legacy helper: single-string user prompt. Kept for callers that don't
+    use the LiteLLM message shape (tests, and any judge that composes prompts
+    as strings)."""
     ref_block = reference if reference else "(none provided — correctness MUST be 'unverifiable')"
     return f"""{RUBRIC}
 

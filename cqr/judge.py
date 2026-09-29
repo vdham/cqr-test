@@ -32,9 +32,9 @@ from pydantic import ValidationError
 
 from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
                      JudgeUnavailable, TranscriptRejected)
-from .rubric import RUBRIC_VERSION, SYSTEM, build_user_prompt
+from .rubric import RUBRIC_VERSION, SYSTEM, build_messages, build_user_prompt
 from .schema import (Correctness, Level3, Resolution, Review, RiskFlag, RiskFlagType,
-                     SentimentPoint, SignalResult, Transcript)
+                     SentimentPoint, SignalResult, Transcript, Usage)
 
 
 _SIGNAL_KEYS = ("resolution", "correctness", "customer_effort", "interaction_quality")
@@ -154,11 +154,34 @@ def _classify_litellm_error(exc: Exception, attempts: int) -> JudgeError:
     return JudgeUnavailable(f"{name}: {exc}", attempts=attempts)
 
 
+def _extract_usage(msg, model: str) -> Usage:
+    """Pull token counts + cost out of a LiteLLM response defensively. Field
+    names vary across providers; use getattr and default to 0. Cost lookup
+    can fail for gateway/self-hosted models with no pricing table — swallow."""
+    import litellm
+    u = getattr(msg, "usage", None)
+    input_tokens = int(getattr(u, "prompt_tokens", 0) or 0) if u else 0
+    output_tokens = int(getattr(u, "completion_tokens", 0) or 0) if u else 0
+    cache_read = int(getattr(u, "cache_read_input_tokens", 0) or 0) if u else 0
+    cache_create = int(getattr(u, "cache_creation_input_tokens", 0) or 0) if u else 0
+    try:
+        cost = float(litellm.completion_cost(completion_response=msg) or 0.0)
+    except Exception:  # noqa: BLE001
+        cost = 0.0
+    return Usage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_input_tokens=cache_read,
+        cache_creation_input_tokens=cache_create,
+        cost_usd=round(cost, 6),
+    )
+
+
 class LLMJudge:
     """LiteLLM-backed LLM judge. One provider call per transcript with
-    temperature=0. On invalid JSON, retries `max_output_retries` more times
-    with the previous output attached so the model can self-correct. Never
-    uses litellm's `fallbacks=` — see module docstring."""
+    temperature=0. On invalid JSON, appends a fresh user message and retries
+    up to `max_output_retries` more times — the cacheable prefix (system +
+    reference) stays intact across retries. Never uses litellm's `fallbacks=`."""
 
     def __init__(self, model: str | None = None, max_output_retries: int = 2):
         self.model = model or os.environ.get("CQR_MODEL", "claude-sonnet-4-5")
@@ -167,7 +190,7 @@ class LLMJudge:
 
     def judge(self, t: Transcript) -> Review:
         import litellm
-        prompt = build_user_prompt(t.render(), t.reference, t.intent)
+        messages = build_messages(t.render(), t.reference, t.intent, model=self.model)
         last_err: Exception | None = None
         for attempt in range(self.max_output_retries + 1):
             try:
@@ -178,24 +201,27 @@ class LLMJudge:
                     timeout=float(os.environ.get("CQR_LLM_TIMEOUT_S", "60")),
                     num_retries=int(os.environ.get("CQR_LLM_RETRIES", "2")),
                     api_base=os.environ.get("CQR_LLM_BASE_URL") or None,
-                    messages=[
-                        {"role": "system", "content": SYSTEM},
-                        {"role": "user", "content": prompt},
-                    ],
+                    messages=messages,
                 )
             except Exception as exc:
                 raise _classify_litellm_error(exc, attempts=attempt + 1) from exc
 
             text = msg.choices[0].message.content or ""
             try:
-                return _finalize(t, _extract_json(text), self.name)
+                review = _finalize(t, _extract_json(text), self.name)
             except (json.JSONDecodeError, ValidationError, ValueError) as e:
                 last_err = e
-                prompt = prompt + (
-                    f"\n\nYour previous output was invalid "
-                    f"({type(e).__name__}: {str(e)[:300]}). "
-                    "Return ONLY valid JSON matching the schema."
-                )
+                messages = messages + [{
+                    "role": "user",
+                    "content": (
+                        f"Your previous output was invalid "
+                        f"({type(e).__name__}: {str(e)[:300]}). "
+                        "Return ONLY valid JSON matching the schema."
+                    ),
+                }]
+                continue
+            review.usage = _extract_usage(msg, self.model)
+            return review
         raise JudgeOutputInvalid(
             f"invalid JSON after {self.max_output_retries} output retries: {last_err}",
             attempts=self.max_output_retries + 1,

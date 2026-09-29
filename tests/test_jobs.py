@@ -288,6 +288,74 @@ class TestCircuitBreaker:
             await r.stop()
 
 
+class TestJobUsageSum:
+    @pytest.mark.asyncio
+    async def test_job_usage_sums_across_reviews(self, runner):
+        """When judge reviews carry `usage`, the JobRunner sums them into
+        `job.usage`. Heuristic reviews carry no usage (None); LLM reviews do."""
+        from cqr.schema import Usage
+
+        class _WithUsage:
+            name = "with-usage"
+            def __init__(self):
+                self._h = HeuristicJudge()
+            def judge(self, t):
+                r = self._h.judge(t)
+                r.usage = Usage(input_tokens=10, output_tokens=5,
+                                cache_read_input_tokens=8, cost_usd=0.0001)
+                return r
+
+        r = runner(lambda: _WithUsage(), concurrency=1)
+        await r.start()
+        try:
+            job = r.submit([_t("u1"), _t("u2"), _t("u3")])
+            final = await wait_for_job(r, job.id, timeout_s=2.0)
+            assert final.status == JobStatus.completed
+            assert final.usage.input_tokens == 30
+            assert final.usage.output_tokens == 15
+            assert final.usage.cache_read_input_tokens == 24
+            assert final.usage.cost_usd == 0.0003
+        finally:
+            await r.stop()
+
+
+class TestIntentOrdering:
+    @pytest.mark.asyncio
+    async def test_submit_dispatches_in_intent_order(self, runner):
+        """Batch order is (intent, id), so consecutive judge calls share the
+        cacheable reference prefix. Result set is identical regardless."""
+        seen: list[str] = []
+
+        class _Recording:
+            name = "recording"
+            def judge(self, t):
+                seen.append(t.intent or "")
+                return HeuristicJudge().judge(t)
+
+        r = runner(lambda: _Recording(), concurrency=1)
+        await r.start()
+        try:
+            unsorted = [
+                Transcript(id=f"z{i}", source="test", intent=intent,
+                           turns=[Turn(idx=0, speaker="agent", text="hi"),
+                                  Turn(idx=1, speaker="customer", text="?")])
+                for i, intent in enumerate([
+                    "shipping_issue/missing",
+                    "account_access/recover_password",
+                    "shipping_issue/missing",
+                ])
+            ]
+            job = r.submit(unsorted)
+            await wait_for_job(r, job.id, timeout_s=2.0)
+            assert seen == [
+                "account_access/recover_password",
+                "shipping_issue/missing",
+                "shipping_issue/missing",
+            ]
+        finally:
+            await r.stop()
+
+
 class TestConcurrency:
     @pytest.mark.asyncio
     async def test_bounded_by_worker_count(self, runner):

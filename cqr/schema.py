@@ -184,6 +184,7 @@ class Review(BaseModel):
     judge: str = Field(description="which judge produced this: anthropic:<model> | heuristic | llm:<model>")
     rubric_version: str = Field(description="Version of the rubric this review was scored against. Stamped by the judge.")
     job_id: Optional[str] = Field(default=None, description="If this review came from a batch job, the JobRunner id. None for single POST /review calls.")
+    usage: Optional[Usage] = Field(default=None, description="Token counts and cost from the judge. None for the heuristic judge and for cached reviews (see cache_hit).")
     needs_human_review: bool = Field(default=False, description="True when any risk flag is medium+ or correctness is contradicted. Always present — set by the Review validator.")
     summary: str = Field(default="", description="One line a supervisor can read in a list view")
 
@@ -255,6 +256,27 @@ class JobError(BaseModel):
     attempts: int = 1
 
 
+class Usage(BaseModel):
+    """Per-review token counts and cost. Populated by the LLM judge from the
+    provider's response; zero for the heuristic judge. Anthropic's
+    cache_read/cache_creation fields are 0 on providers without prompt
+    caching."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cost_usd: float = 0.0
+
+    def add(self, other: "Usage") -> "Usage":
+        return Usage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cache_read_input_tokens=self.cache_read_input_tokens + other.cache_read_input_tokens,
+            cache_creation_input_tokens=self.cache_creation_input_tokens + other.cache_creation_input_tokens,
+            cost_usd=round(self.cost_usd + other.cost_usd, 6),
+        )
+
+
 class Job(BaseModel):
     id: str
     status: JobStatus = JobStatus.queued
@@ -264,6 +286,8 @@ class Job(BaseModel):
     idempotency_key: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: Optional[datetime] = None
+    usage: Usage = Field(default_factory=Usage,
+                         description="Sum of per-review usage for this job.")
 
 
 class BatchAccepted(BaseModel):

@@ -1,7 +1,7 @@
 """Rubric prompt construction."""
 from __future__ import annotations
 
-from cqr.rubric import RUBRIC, RUBRIC_VERSION, SYSTEM, build_user_prompt
+from cqr.rubric import RUBRIC, RUBRIC_VERSION, SYSTEM, build_messages, build_user_prompt
 
 
 class TestBuildUserPrompt:
@@ -68,3 +68,53 @@ class TestRubricVersion:
         assert isinstance(RUBRIC_VERSION, str)
         parts = RUBRIC_VERSION.split(".")
         assert all(p.isdigit() for p in parts)
+
+
+class TestBuildMessagesCaching:
+    """Prompt-caching structure: on Anthropic models, system+rubric and the
+    reference block carry cache_control ephemeral so batches sharing a
+    reference reuse the cache. On other providers, everything falls back to
+    plain-string content (LiteLLM won't send cache_control at all)."""
+
+    def test_anthropic_gets_cache_control_on_system(self):
+        msgs = build_messages("[0] AGENT: hi", "REF", "shipping_issue/missing",
+                              model="claude-sonnet-4-5")
+        assert msgs[0]["role"] == "system"
+        assert isinstance(msgs[0]["content"], list)
+        assert msgs[0]["content"][0].get("cache_control") == {"type": "ephemeral"}
+        # system block is SYSTEM + RUBRIC concatenated.
+        assert SYSTEM.strip() in msgs[0]["content"][0]["text"]
+        assert "SIGNALS" in msgs[0]["content"][0]["text"]  # rubric anchor
+
+    def test_anthropic_reference_precedes_transcript(self):
+        msgs = build_messages("[0] AGENT: hi", "MY-REFERENCE", "shipping/missing",
+                              model="claude-sonnet-4-5")
+        user_content = msgs[1]["content"]
+        assert isinstance(user_content, list)
+        assert len(user_content) == 2
+        # Reference is first (cache_control), transcript tail second (no cache).
+        assert user_content[0]["cache_control"] == {"type": "ephemeral"}
+        assert "MY-REFERENCE" in user_content[0]["text"]
+        assert "cache_control" not in user_content[1]
+        assert "TRANSCRIPT" in user_content[1]["text"]
+        assert "[0] AGENT: hi" in user_content[1]["text"]
+
+    def test_anthropic_missing_reference_still_structured(self):
+        msgs = build_messages("[0] AGENT: hi", None, None,
+                              model="claude-sonnet-4-5")
+        assert "none provided" in msgs[1]["content"][0]["text"]
+        # Reference block is still marked cache_control (fixed blob per run).
+        assert msgs[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_non_anthropic_gets_plain_strings(self):
+        msgs = build_messages("[0] AGENT: hi", "REF", "shipping/missing",
+                              model="gpt-4o")
+        assert isinstance(msgs[0]["content"], str)
+        assert isinstance(msgs[1]["content"], str)
+        # Reference still precedes transcript inside the flattened string.
+        user = msgs[1]["content"]
+        assert user.index("REF") < user.index("TRANSCRIPT")
+
+    def test_no_model_treated_as_non_anthropic(self):
+        msgs = build_messages("[0] AGENT: hi", "REF", None, model=None)
+        assert isinstance(msgs[0]["content"], str)

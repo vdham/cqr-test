@@ -33,6 +33,8 @@ Consumable three ways: `POST /review` (one transcript → review), `POST /review
 
 **Judge: LiteLLM with `fallbacks=` deliberately off.** The judge speaks whatever provider LiteLLM does — Anthropic, OpenAI, Azure, or an OpenAI-compatible gateway pointed at by `CQR_LLM_BASE_URL`. Attribution is more important than availability for a scoring product: fallbacks between models would introduce silent quality drift across `judge` values, which corrupts every downstream trend. Errors are classified via `_classify_litellm_error` into the four `JudgeError` subclasses — retryable/terminal × transcript/config — so callers get typed failures instead of provider-shaped exceptions.
 
+**Cost.** The stable part of every request — the anchored rubric plus the reference for that intent — is marked `cache_control: ephemeral` on Anthropic, so a batch of conversations sharing an intent pays full cost once and cache-read rates thereafter. Batches (`POST /review/batch` and `cqr review`) are enqueued in `(intent, id)` order specifically to keep that prefix identical across consecutive calls; ordering doesn't change results. Each `Review` carries `usage` (input/output/cache_read/cache_creation tokens + `cost_usd`) so drift in either direction is measurable, and `Job.usage` is the per-batch sum.
+
 ## What I'd harden for production
 
 - **Judge reliability.** Temperature 0 and retries on invalid JSON are not enough. Add self-consistency (2–3 samples, majority), a small calibration set with human labels per signal, and per-signal agreement tracking. Split the correctness check into its own call with retrieval over the policy corpus rather than passing the whole guideline.

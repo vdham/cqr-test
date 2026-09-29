@@ -85,6 +85,10 @@ class JobRunner:
                 f"cannot enqueue {len(transcripts)} more items"
             )
 
+        # Enqueue in intent-then-id order so consecutive calls share the
+        # cacheable reference prefix. Ordering does not affect results —
+        # each review is independent.
+        transcripts = sorted(transcripts, key=lambda t: (t.intent or "", t.id))
         job_id = str(uuid.uuid4())
         job = Job(id=job_id, total=len(transcripts),
                   idempotency_key=idempotency_key)
@@ -147,6 +151,8 @@ class JobRunner:
             review.job_id = job_id
             self._store.put(t, review)
             self._consec_retryable[job_id] = 0  # success resets the streak
+            if review.usage is not None:
+                job.usage = job.usage.add(review.usage)
         except JudgeError as je:
             # Classified failure: carry retryable/attempts through; if the
             # scope is config, the whole job aborts (every remaining item

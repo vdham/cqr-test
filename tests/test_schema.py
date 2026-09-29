@@ -199,6 +199,21 @@ class TestReviewNeedsHumanReview:
         assert r.needs_human_review is False
 
 
+class TestUsage:
+    def test_add_sums_all_fields(self):
+        from cqr.schema import Usage
+        a = Usage(input_tokens=100, output_tokens=50, cache_read_input_tokens=200,
+                  cache_creation_input_tokens=10, cost_usd=0.001234)
+        b = Usage(input_tokens=50, output_tokens=25, cache_read_input_tokens=100,
+                  cache_creation_input_tokens=0, cost_usd=0.000567)
+        c = a.add(b)
+        assert c.input_tokens == 150
+        assert c.output_tokens == 75
+        assert c.cache_read_input_tokens == 300
+        assert c.cache_creation_input_tokens == 10
+        assert c.cost_usd == 0.001801  # rounded to 6dp
+
+
 class TestSortKey:
     def _build(self, base, tid, **overrides):
         kw = {**base, **overrides, "transcript_id": tid}

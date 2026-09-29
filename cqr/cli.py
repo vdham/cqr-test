@@ -100,6 +100,10 @@ def cmd_review(args) -> int:
     ts = _collect(args)
     if not ts:
         sys.exit("no transcripts; pass --abcd, --synthetic, or --jsonl")
+    # Intent-sort so consecutive judge calls share the cacheable reference
+    # prefix on providers that support prompt caching. Ordering never affects
+    # results — each review is independent.
+    ts = sorted(ts, key=lambda t: (t.intent or "", t.id))
     print(f"judge={judge.name}  transcripts={len(ts)}  concurrency={args.concurrency}  out={args.out}", file=sys.stderr)
     errors = 0
     t0 = time.time()
