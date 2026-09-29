@@ -19,13 +19,13 @@ Work top to bottom. Tick each box in the same commit as the change.
 - [x] Tests: list returns 55 rows with the four documented fields; empty when index absent; get returns full Reference with text; unknown flow / unknown slug / missing index all 404 `ErrorBody`; health guidelines block populated + zeroed correctly
 
 ## C. Server-side resolution — commit `feat(judge): resolve reference by id or intent; record how`  → `<pending>`
-- [ ] `Transcript.reference_id: Optional[str] = None`
-- [ ] `resolve_reference(t) -> tuple[str | None, str, str]` — `(text, resolution, version)`; resolution ∈ `{inline, id, intent, none}`; unknown `reference_id` raises `TranscriptRejected`
-- [ ] `LLMJudge` and `HeuristicJudge` both resolve at the top of `judge()`, use the resolved text for the prompt
-- [ ] `_finalize` calls `resolve_reference` to stamp `reference_id`, `reference_resolution`, `reference_version`; correctness override uses the resolved text (not just `t.reference`)
-- [ ] `Review.reference_id: Optional[str] = None`; `Review.reference_resolution: str = "inline"` (default matches pre-004 behaviour where only inline references existed)
-- [ ] OpenAPI examples: `with_reference` becomes a `reference_id` example; keep one inline-text example
-- [ ] Tests: inline path; `reference_id` path; `intent` path; `none` path → correctness forced unverifiable; unknown `reference_id` → 422 `TranscriptRejected` with `error_type: "TranscriptRejected"`; unknown `intent` → resolution "none" (not error); `Review.reference_version` matches `GET /guidelines/{id}.version`
+- [x] `Transcript.reference_id: Optional[str] = None`
+- [x] `resolve_reference(t)` in `cqr/loader.py` — inline > id > intent > none; unknown `reference_id` raises `TranscriptRejected`; unknown `intent` falls to `none`
+- [x] `LLMJudge.judge` resolves at the top and passes text into `build_messages` (so the prompt reflects the resolved reference, not `t.reference`)
+- [x] `_finalize` calls `resolve_reference` again to stamp `reference_id`, `reference_resolution`, `reference_version`; correctness-forced-unverifiable now keys on the resolved text (not `t.reference`)
+- [x] `Review.reference_id`, `Review.reference_resolution` (default "inline" — matches pre-004 stored reviews where only inline was possible)
+- [x] OpenAPI examples restructured: `minimal` (no reference), `by_reference_id` (preferred), `inline_reference` (fallback)
+- [x] Tests: each resolution path (`inline`, `id`, `intent`, `none`); unknown `reference_id` → 422 `TranscriptRejected`; unknown `intent` → "none" + unverifiable; `Review.reference_version` matches `GET /guidelines/{id}.version`; id path with no index raises
 
 ## D. Stale check via index + dashboard + docs — commit `feat: stale via reference index; dashboard shows reference id/version`  → `<pending>`
 - [ ] `is_stale` looks up `review.reference_id` in `get_index()` when `reference_resolution in ("id", "intent")`; inline never goes stale via that path

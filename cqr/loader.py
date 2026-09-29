@@ -305,6 +305,45 @@ def _reset_index_for_tests() -> None:
     _INDEX = None
 
 
+def resolve_reference(t: Transcript) -> tuple[Optional[str], str, str]:
+    """Server-side reference resolution. Returns `(text, resolution, version)`
+    where `resolution` is one of:
+
+    - `"inline"` — `t.reference` was set; use it verbatim.
+    - `"id"` — `t.reference` was None but `t.reference_id` resolved via
+      the current `get_index()`. Unknown ids raise `TranscriptRejected`
+      (422) — the caller pointed at something we don't know about.
+    - `"intent"` — `t.reference_id` was None but `t.intent` (advisory)
+      matched a canonical reference. Unknown intents fall through to
+      `"none"` — intent is not authoritative, so an unknown intent is
+      not an error.
+    - `"none"` — nothing to score correctness against; the caller upstream
+      forces `correctness = unverifiable`.
+
+    The version is `reference_version(text)` for inline / `Reference.version`
+    for id/intent (same value — both are 12-hex sha256 of the text) / `"none"`
+    when there's no text."""
+    # Import lazily to avoid circular import between loader ↔ errors.
+    from .errors import TranscriptRejected
+    from .schema import reference_version
+
+    if t.reference:
+        return t.reference, "inline", reference_version(t.reference)
+    idx = get_index()
+    if t.reference_id:
+        ref = idx.get(t.reference_id) if idx else None
+        if ref is None:
+            raise TranscriptRejected(
+                f"unknown reference_id: {t.reference_id!r} — see GET /guidelines for known ids"
+            )
+        return ref.text, "id", ref.version
+    if t.intent and idx is not None:
+        ref = idx.get(t.intent)
+        if ref is not None:
+            return ref.text, "intent", ref.version
+    return None, "none", "none"
+
+
 def _abcd_convo_to_transcript(c: dict, gi: Optional[GuidelineIndex]) -> Transcript:
     scen = c["scenario"]
     flow, subflow = scen.get("flow", ""), scen.get("subflow", "")

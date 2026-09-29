@@ -284,6 +284,148 @@ class TestGetGuidelineEndpoint:
         assert r.status_code == 404
 
 
+class TestResolveReference:
+    """resolve_reference implements the inline > id > intent > none order."""
+
+    def _t(self, **kwargs):
+        from cqr.schema import Turn as T
+        turns = kwargs.pop("turns", None) or [T(idx=0, speaker="agent", text="hi"),
+                                                T(idx=1, speaker="customer", text="?")]
+        base = dict(id="c", source="test", turns=turns)
+        base.update(kwargs)
+        from cqr.schema import Transcript
+        return Transcript(**base)
+
+    def test_inline_wins(self):
+        from cqr.loader import resolve_reference
+        t = self._t(reference="INLINE POLICY", reference_id="shipping_issue/missing")
+        text, res, ver = resolve_reference(t)
+        assert text == "INLINE POLICY"
+        assert res == "inline"
+
+    def test_id_when_no_inline(self, monkeypatch):
+        monkeypatch.setenv("CQR_GUIDELINES", "data/abcd/guidelines.json")
+        _reset_index_for_tests()
+        from cqr.loader import resolve_reference
+        t = self._t(reference_id="shipping_issue/missing")
+        text, res, ver = resolve_reference(t)
+        assert res == "id"
+        assert "SUBFLOW: Missing Item" in text
+        assert len(ver) == 12
+
+    def test_intent_when_no_id(self, monkeypatch):
+        monkeypatch.setenv("CQR_GUIDELINES", "data/abcd/guidelines.json")
+        _reset_index_for_tests()
+        from cqr.loader import resolve_reference
+        t = self._t(intent="shipping_issue/missing")
+        text, res, ver = resolve_reference(t)
+        assert res == "intent"
+        assert "SUBFLOW: Missing Item" in text
+
+    def test_unknown_intent_falls_to_none(self, monkeypatch):
+        monkeypatch.setenv("CQR_GUIDELINES", "data/abcd/guidelines.json")
+        _reset_index_for_tests()
+        from cqr.loader import resolve_reference
+        t = self._t(intent="totally/nonexistent")
+        text, res, ver = resolve_reference(t)
+        assert text is None
+        assert res == "none"
+        assert ver == "none"
+
+    def test_none_when_nothing_supplied(self):
+        from cqr.loader import resolve_reference
+        t = self._t()
+        text, res, ver = resolve_reference(t)
+        assert text is None
+        assert res == "none"
+
+    def test_unknown_reference_id_raises_transcript_rejected(self, monkeypatch):
+        monkeypatch.setenv("CQR_GUIDELINES", "data/abcd/guidelines.json")
+        _reset_index_for_tests()
+        from cqr.errors import TranscriptRejected
+        from cqr.loader import resolve_reference
+        t = self._t(reference_id="does_not/exist")
+        with pytest.raises(TranscriptRejected):
+            resolve_reference(t)
+
+    def test_id_without_index_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CQR_GUIDELINES", str(tmp_path / "nope.json"))
+        _reset_index_for_tests()
+        from cqr.errors import TranscriptRejected
+        from cqr.loader import resolve_reference
+        t = self._t(reference_id="shipping_issue/missing")
+        with pytest.raises(TranscriptRejected):
+            resolve_reference(t)
+
+
+class TestReviewRecordsResolution:
+    """`_finalize` stamps reference_id + reference_resolution based on how
+    the reference was resolved. The API returns them on the response."""
+
+    @pytest.fixture
+    def api_client(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(api, "_store", Store(tmp_path / "reviews.json"))
+        monkeypatch.setenv("CQR_JUDGE", "heuristic")
+        monkeypatch.setenv("CQR_GUIDELINES", "data/abcd/guidelines.json")
+        monkeypatch.setattr(api, "_judge", HeuristicJudge())
+        _reset_index_for_tests()
+        with TestClient(api.app) as c:
+            yield c
+        _reset_index_for_tests()
+
+    def _body(self, id_, **kwargs):
+        base = {
+            "id": id_, "source": "upload",
+            "turns": [{"idx": 0, "speaker": "agent", "text": "hi"},
+                      {"idx": 1, "speaker": "customer", "text": "?"}],
+        }
+        base.update(kwargs)
+        return base
+
+    def test_id_resolution_recorded(self, api_client):
+        body = self._body("id-1", reference_id="shipping_issue/missing")
+        r = api_client.post("/review", json=body).json()
+        assert r["reference_resolution"] == "id"
+        assert r["reference_id"] == "shipping_issue/missing"
+        # reference_version matches GET /guidelines/{id}.version
+        expected = api_client.get("/guidelines/shipping_issue/missing").json()["version"]
+        assert r["reference_version"] == expected
+
+    def test_intent_resolution_recorded(self, api_client):
+        body = self._body("intent-1", intent="shipping_issue/missing")
+        r = api_client.post("/review", json=body).json()
+        assert r["reference_resolution"] == "intent"
+        assert r["reference_id"] == "shipping_issue/missing"
+
+    def test_inline_resolution_recorded(self, api_client):
+        body = self._body("inline-1", reference="AGENT GUIDELINES: reship after 7 days")
+        r = api_client.post("/review", json=body).json()
+        assert r["reference_resolution"] == "inline"
+        assert r["reference_id"] is None
+        assert len(r["reference_version"]) == 12
+
+    def test_none_forces_unverifiable(self, api_client):
+        body = self._body("none-1")  # no reference, no id, no intent
+        r = api_client.post("/review", json=body).json()
+        assert r["reference_resolution"] == "none"
+        assert r["reference_id"] is None
+        assert r["reference_version"] == "none"
+        assert r["correctness"]["level"] == "unverifiable"
+
+    def test_unknown_id_returns_422_transcript_rejected(self, api_client):
+        body = self._body("bad-id", reference_id="does_not/exist")
+        r = api_client.post("/review", json=body)
+        assert r.status_code == 422
+        body = r.json()
+        assert body["error_type"] == "TranscriptRejected"
+
+    def test_unknown_intent_falls_to_none(self, api_client):
+        body = self._body("mystery-intent", intent="mystery/one")
+        r = api_client.post("/review", json=body).json()
+        assert r["reference_resolution"] == "none"
+        assert r["correctness"]["level"] == "unverifiable"
+
+
 class TestHealthGuidelines:
     def test_guidelines_block_shape(self, client):
         body = client.get("/health").json()

@@ -34,6 +34,7 @@ from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
                      JudgeUnavailable, TranscriptRejected)
 from . import rubric as _rubric  # for _rubric.RUBRIC_VERSION read at call time
 from . import schema as _schema  # for _schema.SCHEMA_VERSION read at call time
+from .loader import resolve_reference
 from .rubric import SYSTEM, build_messages, build_user_prompt
 from .schema import (Correctness, JudgeOutput, Level3, Resolution, Review, RiskFlag,
                      RiskFlagType, SentimentPoint, SignalResult,
@@ -77,7 +78,18 @@ def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
     raw["rubric_version"] = _rubric.RUBRIC_VERSION
     raw["schema_version"] = _schema.SCHEMA_VERSION
     raw["transcript_digest"] = t.digest()
-    raw["reference_version"] = reference_version(t.reference)
+
+    # Reference resolution: inline → id → intent → none. May raise
+    # TranscriptRejected for an unknown reference_id (422 at the API).
+    resolved_text, resolution, ref_version = resolve_reference(t)
+    raw["reference_version"] = ref_version
+    raw["reference_resolution"] = resolution
+    if resolution == "id":
+        raw["reference_id"] = t.reference_id
+    elif resolution == "intent":
+        raw["reference_id"] = t.intent
+    else:
+        raw["reference_id"] = None
 
     for key in _SIGNAL_KEYS:
         sig = raw.get(key)
@@ -87,10 +99,10 @@ def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
         if isinstance(f, dict) and isinstance(f.get("severity"), str):
             f["severity"] = _normalize_level(f["severity"])
 
-    if not t.reference and raw.get("correctness", {}).get("level") != Correctness.unverifiable.value:
+    if not resolved_text and raw.get("correctness", {}).get("level") != Correctness.unverifiable.value:
         raw["correctness"] = {
             "level": Correctness.unverifiable.value,
-            "rationale": "No reference policy provided for this conversation; claims cannot be checked.",
+            "rationale": "No reference policy resolved for this conversation; claims cannot be checked.",
             "turns": [],
         }
 
@@ -211,20 +223,25 @@ class LLMJudge:
 
     def judge(self, t: Transcript) -> Review:
         import litellm
-        # Try structured output first. If the provider rejects response_format,
-        # fall back to the prose-schema path (`structured_output=False`) once.
+        # Resolve the reference once up front so the LLM prompt sees the
+        # actual policy text even when the caller supplied only a
+        # reference_id or an intent. Unknown reference_id raises
+        # TranscriptRejected here (before any tokens are spent).
+        resolved_text, _resolution, _ver = resolve_reference(t)
         try:
             return self._judge_once(
-                t, structured_output=True,
+                t, resolved_text,
+                structured_output=True,
                 response_format=self._response_format(),
             )
         except litellm.exceptions.UnsupportedParamsError:
-            return self._judge_once(t, structured_output=False, response_format=None)
+            return self._judge_once(t, resolved_text,
+                                    structured_output=False, response_format=None)
 
-    def _judge_once(self, t: Transcript, *, structured_output: bool,
-                    response_format: dict | None) -> Review:
+    def _judge_once(self, t: Transcript, resolved_text: str | None, *,
+                    structured_output: bool, response_format: dict | None) -> Review:
         import litellm
-        messages = build_messages(t.render(), t.reference, t.intent,
+        messages = build_messages(t.render(), resolved_text, t.intent,
                                   model=self.model,
                                   structured_output=structured_output)
         last_err: Exception | None = None

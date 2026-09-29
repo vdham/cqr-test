@@ -18,11 +18,12 @@ from cqr.rubric import RUBRIC_VERSION
 from cqr.schema import SCHEMA_VERSION, Transcript, Turn, reference_version
 
 
-def _fixed_transcript(*, reference: str | None = "REF: reship after 7 days.") -> Transcript:
+def _fixed_transcript(*, reference: str | None = "REF: reship after 7 days.",
+                       intent: str | None = "shipping_issue/missing") -> Transcript:
     return Transcript(
         id="fixed",
         source="upload",
-        intent="shipping_issue/missing",
+        intent=intent,
         reference=reference,
         turns=[
             Turn(idx=0, speaker="agent", text="Hi."),
@@ -72,10 +73,13 @@ class TestModelCannotOverrideDerivedFields:
 
     def test_correctness_forced_unverifiable_when_no_reference(self):
         """Even when the model insists 'supported' or 'contradicted', a
-        Transcript with no reference forces `correctness = unverifiable`."""
+        Transcript with nothing to resolve (no inline reference, no
+        reference_id, no matching intent) forces `correctness = unverifiable`."""
         raw = _model_out_with_lies()
         raw["correctness"] = {"level": "contradicted", "rationale": "r", "turns": [2]}
-        r = _finalize(_fixed_transcript(reference=None), raw, "test")
+        # No reference AND no intent that resolves — otherwise server-side
+        # intent resolution (spec 004) would pull in a canonical reference.
+        r = _finalize(_fixed_transcript(reference=None, intent=None), raw, "test")
         assert r.correctness.level.value == "unverifiable"
         # `needs_human_review` therefore drops (no medium+ flags... wait, yes
         # there are two flags in the lies dict). Sanity check separately:
@@ -104,7 +108,8 @@ class TestVersioningFieldsAreServerAuthoritative:
         assert r.reference_version != "hacked"
 
     def test_reference_version_is_none_string_without_reference(self):
-        r = _finalize(_fixed_transcript(reference=None),
+        # No inline reference AND no resolvable intent — resolution 'none'.
+        r = _finalize(_fixed_transcript(reference=None, intent=None),
                        _model_out_with_lies(), "test")
         assert r.reference_version == "none"
 

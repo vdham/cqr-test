@@ -246,7 +246,7 @@ async def _not_found_handler(request: Request, exc: NotFoundError):
 _TRANSCRIPT_EXAMPLES = {
     "minimal": {
         "summary": "Minimal upload (no reference)",
-        "description": "Two-turn conversation with no policy reference. `correctness` will be `unverifiable`.",
+        "description": "Two-turn conversation with no reference. `correctness` will be `unverifiable`.",
         "value": {
             "id": "demo-001",
             "source": "upload",
@@ -256,13 +256,25 @@ _TRANSCRIPT_EXAMPLES = {
             ],
         },
     },
-    "with_reference": {
-        "summary": "Upload with policy reference",
-        "description": "Same conversation with an inline guideline; enables the `correctness` signal.",
+    "by_reference_id": {
+        "summary": "By reference_id — server-side lookup (preferred)",
+        "description": "Point at a canonical guideline. Server resolves via `GET /guidelines/{flow}/{subflow}` and the review records `reference_resolution: 'id'`. Unknown ids return 422 TranscriptRejected. Preferred over inline text — no repetition across a batch, cache hits stay warm, and stale detection knows when the underlying guideline changed.",
         "value": {
             "id": "demo-002",
             "source": "upload",
-            "intent": "shipping_issue/missing",
+            "reference_id": "shipping_issue/missing",
+            "turns": [
+                {"idx": 0, "speaker": "customer", "text": "My package hasn't arrived, it's been 3 days."},
+                {"idx": 1, "speaker": "agent", "text": "I'll reship right now."},
+            ],
+        },
+    },
+    "inline_reference": {
+        "summary": "Inline reference text (for callers without a canonical id)",
+        "description": "Paste the policy text directly. Review records `reference_resolution: 'inline'`. Use when the reference isn't in the guideline index — otherwise prefer `reference_id`.",
+        "value": {
+            "id": "demo-003",
+            "source": "upload",
             "reference": "AGENT GUIDELINES: If waiting < 7 days, ask the customer to wait. If waiting >= 7 days, reship.",
             "turns": [
                 {"idx": 0, "speaker": "customer", "text": "My package hasn't arrived, it's been 3 days."},
@@ -311,7 +323,7 @@ async def review_batch(
         "two_transcripts": {
             "summary": "Batch of two transcripts",
             "value": {"transcripts": [_TRANSCRIPT_EXAMPLES["minimal"]["value"],
-                                       _TRANSCRIPT_EXAMPLES["with_reference"]["value"]]},
+                                       _TRANSCRIPT_EXAMPLES["by_reference_id"]["value"]]},
         },
     }),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),

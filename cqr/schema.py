@@ -52,7 +52,11 @@ class Transcript(BaseModel):
     )
     reference: Optional[str] = Field(
         default=None,
-        description="Policy / guideline text the agent should have followed. Enables the correctness signal. None => correctness is unverifiable.",
+        description="Policy / guideline text the agent should have followed. Enables the correctness signal. Resolution order: inline `reference` wins > `reference_id` > `intent` > none. When all are None, correctness is unverifiable.",
+    )
+    reference_id: Optional[str] = Field(
+        default=None,
+        description="Canonical reference id ('flow_key/subflow_key') to be looked up server-side. Used when `reference` is not provided. Unknown ids return 422 TranscriptRejected.",
     )
     metadata: dict = Field(default_factory=dict)
 
@@ -218,7 +222,9 @@ class Review(BaseModel):
     # compatibility with pre-versioning stored reviews.
     schema_version: str = Field(default="", description=f"CQR schema version this review was written against. Current: {SCHEMA_VERSION!r}. Empty for pre-versioning stored reviews.")
     transcript_digest: str = Field(default="", description="sha256 of the transcript's content (id, source, intent, reference, turns). Empty for pre-versioning reviews.")
-    reference_version: str = Field(default="", description="12-hex sha256 of the reference text, or 'none' when no reference. Empty for pre-versioning reviews.")
+    reference_version: str = Field(default="", description="12-hex sha256 of the resolved reference text, or 'none' when no reference. Empty for pre-versioning reviews.")
+    reference_id: Optional[str] = Field(default=None, description="Canonical reference id ('flow_key/subflow_key') the review was scored against, when resolution was 'id' or 'intent'. None for inline/no-reference.")
+    reference_resolution: str = Field(default="inline", description="How the reference was resolved: 'inline' (Transcript.reference), 'id' (Transcript.reference_id), 'intent' (Transcript.intent → GuidelineIndex), or 'none'. Default 'inline' matches pre-004 behaviour.")
     cache_hit: bool = Field(default=False, description="Per-response flag: True when this review was served from the content cache (same digest + rubric + reference + judge as a prior call). Never persisted True.")
     stale: bool = Field(default=False, description="Per-response flag: True when the review was scored against an older SCHEMA_VERSION, RUBRIC_VERSION, or a reference that has since changed. Computed at read time; never persisted True.")
     needs_human_review: bool = Field(default=False, description="True when any risk flag is medium+ or correctness is contradicted. Always present — set by the Review validator.")
