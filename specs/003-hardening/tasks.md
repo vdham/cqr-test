@@ -13,10 +13,10 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] README §Setup: one line pointing at `THIRD_PARTY_NOTICES.md`
 
 ## C. README shape — commit `docs(readme): expected output, reading order, deliberate scope`  → `<pending>`
-- [ ] **Quick start**: an "Expected output" block that is the trimmed real output of `scripts/demo.sh` (~25 lines)
-- [ ] **Reading order** table near the top (`If you want to… → read…`) covering TRADEOFFS, STATUS, specs/, docs/decisions, CQR_FIXES, cqr/schema.py, cqr/rubric.py
-- [ ] **Deliberate scope** section above §Contract — two short paragraphs, phrased from TRADEOFFS.md
-- [ ] **Design principles** — a numbered list of five items
+- [x] **Quick start**: an "Expected output" block that is the trimmed real output of `scripts/demo.sh` (~25 lines)
+- [x] **Reading order** table near the top (`If you want to… → read…`) covering TRADEOFFS, STATUS, specs/, docs/decisions, CQR_FIXES, cqr/schema.py, cqr/rubric.py
+- [x] **Deliberate scope** section above §Contract — two short paragraphs, phrased from TRADEOFFS.md
+- [x] **Design principles** — a numbered list of five items
 
 ## D. Timed demo script — commit `docs: add specs/DEMO.md`  → `<pending>`
 - [ ] `specs/DEMO.md` — five sections with timestamps summing to ~4:30; each section has *click / say / notice*

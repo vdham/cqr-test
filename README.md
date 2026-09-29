@@ -17,6 +17,21 @@ Signals (see `TRADEOFFS.md` for why):
 
 Every signal returns `{level, rationale, turns}`. Derived fields (`needs_human_review`, `sentiment_delta`, risk-flag deduping, trajectory sort) are enforced by the `Review` schema at construction — see [Invariants](#invariants) below.
 
+## Reading order
+
+Depending on why you're here:
+
+| If you want to… | Read |
+|---|---|
+| Watch the four-minute walkthrough | [`specs/DEMO.md`](specs/DEMO.md) |
+| See what the prototype proves and where it stops | [Deliberate scope](#deliberate-scope) below · [`TRADEOFFS.md`](TRADEOFFS.md) |
+| Understand the current state of work | [`STATUS.md`](STATUS.md) |
+| Follow the working process | [`AGENTS.md`](AGENTS.md) · [`specs/`](specs) |
+| See the design decisions the panel will ask about | [`docs/decisions/`](docs/decisions) (ADRs) |
+| Read the full fix list this repo closed | [`CQR_FIXES.md`](CQR_FIXES.md) |
+| Read the contract | [`cqr/schema.py`](cqr/schema.py) |
+| Read the rubric (this is the product) | [`cqr/rubric.py`](cqr/rubric.py) |
+
 ## Setup
 
 ```bash
@@ -54,6 +69,33 @@ uvicorn cqr.api:app --reload      # dashboard http://127.0.0.1:8000/  ·  Swagge
 
 # one-shot demo: dashboard + interesting URLs + a live batch through the async job flow. Works with no API key.
 scripts/demo.sh
+```
+
+### Expected output — `scripts/demo.sh`
+
+Real output from a clean heuristic run, trimmed for brevity. The dashboard URLs are live for the ~2 minutes the demo runs.
+
+```
+==> demo store (scratch copy of examples/reviews.anthropic.json): out/demo-store.json
+==> starting API on port 8000 (store=out/demo-store.json)
+
+==> dashboard:                 http://127.0.0.1:8000/
+==> OpenAPI (interactive):     http://127.0.0.1:8000/docs
+==> health:                    http://127.0.0.1:8000/health
+
+Three synthetic conversations worth opening in the dashboard:
+  * http://127.0.0.1:8000/#/reviews/syn-06-exemplary             (good, everything supported)
+  * http://127.0.0.1:8000/#/reviews/syn-01-wrong-but-happy       (happy customer, wrong answer)
+  * http://127.0.0.1:8000/#/reviews/syn-05-pii                   (agent asks for CVV)
+
+==> POST /review/batch?wait=true  (judge=heuristic)  <-  tests/fixtures/batch3.json
+   job_id     = <uuid>
+   status     = completed  (3/3)
+
+==> reviews from that job (riskiest first):
+ ! demo-batch-b        res=unresolved corr=unverifiable   flags=churn_signal
+ ! demo-batch-c        res=unresolved corr=unverifiable   flags=pii_mishandling
+   demo-batch-a        res=unresolved corr=unverifiable   flags=-
 ```
 
 ### Batch flow (accept-then-poll)
@@ -114,6 +156,20 @@ The LLM run is committed at `examples/reviews.anthropic.json` (filename is legac
 ```bash
 CQR_STORE=examples/reviews.anthropic.json uvicorn cqr.api:app --reload
 ```
+
+## Deliberate scope
+
+**What this prototype proves.** The five signals and their anchored levels are a defensible choice — every signal answers a different question a supervisor asks, every judgment cites specific turns, and derived fields are enforced by the schema so a caller cannot supply a wrong `needs_human_review`. There's a working offline path (heuristic judge, regex-shaped, deliberately dumb) that exercises the whole pipeline without a key, and a real LiteLLM-backed path that scores 22/22 on the nine synthetic cases. Every risk-flag verdict is auditable via turn citations rather than opaque scores.
+
+**Where it stops.** Judge accuracy is measured only against nine hand-labeled cases — a regression seed, not a benchmark. Reference lookup assumes a known intent (ABCD's `flow/subflow` labels); production would need intent classification + KB retrieval. The job runner is single-process and in-memory; a real deployment moves jobs to a broker and workers out of process. No auth, no PII redaction, no rate limiting — those belong in a LiteLLM proxy in front of this service. The `TRADEOFFS.md` file lists these under "What I'd harden" with one-line reasons.
+
+### Design principles
+
+1. **No composite score.** A gate can't be averaged — one PII flag surfaces the conversation for a human today regardless of how well it scored elsewhere. ADR: [`docs/decisions/0001-no-composite-score.md`](docs/decisions/0001-no-composite-score.md).
+2. **Model proposes, code enforces.** Every derived field (`needs_human_review`, `sentiment_delta`, risk-flag dedupe, trajectory sort) is recomputed in the schema; nothing the model says can override them. Pinned by [`tests/test_invariants.py`](tests/test_invariants.py).
+3. **A Review is complete or absent.** No partial reviews — Pydantic validation is total, and the retry loop is the way a "not yet complete" review becomes complete. Errors are typed (`ErrorBody`), never a half-filled shape.
+4. **One model + one rubric version per review.** No cross-model fallback (attribution matters more than availability). `Review.judge` and `Review.rubric_version` are stamped on every review; a rubric edit that shifts scores is auditable. ADR: [`docs/decisions/0003-no-cross-model-fallback.md`](docs/decisions/0003-no-cross-model-fallback.md).
+5. **Agents consume reviews, humans own the rubric.** The rubric — the anchored definitions of "supported" vs "contradicted" — is versioned text, not code. It's the artifact reviewers argue about; the code just serves it.
 
 ## Contract
 
