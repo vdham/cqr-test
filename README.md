@@ -153,6 +153,21 @@ Synthetic-set eval scores (nine hand-labeled conversations, 22 anchored checks):
 
 The one miss on the LLM run is `syn-03` interaction_quality — the model scored `medium` where the label calls for `low`. A single-run drift on one edge case; not a regression.
 
+### Cost — measured, not modelled
+
+Every `Review` from the LLM judge carries `usage` (input/output/cache tokens + `cost_usd`); every `Job` carries the per-batch sum. Numbers from the same 9-conversation run committed at `examples/reviews.anthropic.json`:
+
+| Scenario | Cost (9 convos) | Note |
+|---|---:|---|
+| First run, prompt caching ON *(the committed run)* | **$0.074** | 25,256 of 31,632 input tokens (**80%**) served from the ephemeral cache |
+| First run, prompt caching OFF | $0.139 | what a naïve implementation costs |
+| Re-run the same batch, content-cache ON *(the default)* | **$0.00** | `Store.find` returns the stored review, judge is not called |
+| Re-run with `--force` / `?force=true` | $0.139 | bypasses `Store.find`; full re-score |
+
+The two mechanisms compound: (E) marks the system+rubric+reference block `cache_control: ephemeral` and enqueues batches in `(intent, id)` order so that prefix stays identical across consecutive calls — the same-intent runs are the cache-hit ones. (G) refuses to re-score a transcript when nothing content-relevant has changed. Together they mean the marginal cost of a fresh batch drops by roughly half and a re-run is free until the rubric or the reference actually changes — which (H)'s stale detection catches, so you know when to `--force`.
+
+TRADEOFFS §Cost has the arithmetic and the pricing table.
+
 The LLM run is committed at `examples/reviews.anthropic.json` (filename is legacy; the `judge` field on each review is `llm:claude-sonnet-4-5`). Browse it in the dashboard with no key needed:
 
 ```bash

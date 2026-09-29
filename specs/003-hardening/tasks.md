@@ -66,6 +66,7 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] Fresh-clone-style acceptance: `scripts/demo.sh` runs to completion; `git status` clean afterwards
 - [x] `STATUS.md`: 003 done, demo-readiness re-checked
 - [x] `CHANGELOG.md`: `0.5 — 2026-09-28` entry listing A–H
+- [x] Cost section: README §Cost table with measured `$0.074 (cached) vs $0.139 (uncached) vs $0.00 (re-run)` for the 9-conversation run; TRADEOFFS §Cost extended with the same numbers and the pricing table used for the arithmetic → `<pending>`
 
 ## Acceptance
 - [ ] `pytest` green, `coverage report --fail-under=100` passes
