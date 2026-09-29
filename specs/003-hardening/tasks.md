@@ -3,9 +3,9 @@
 Work top to bottom. Tick each box in the same commit as the change. Details live in `PROMPT.md`.
 
 ## A. CI workflow + badge — commit `ci: add GitHub Actions test/coverage gate`  → `<pending>`
-- [ ] `.github/workflows/ci.yml` on push to `main`, PR, and `workflow_dispatch`; ubuntu-latest; Python 3.11
-- [ ] `pip install -r requirements-dev.txt`, then `pytest -q` and `coverage run --source=cqr -m pytest && coverage report --fail-under=100`
-- [ ] README badge at the top of the file, pointing at the workflow on `main`
+- [x] `.github/workflows/ci.yml` on push to `main`, PR, and `workflow_dispatch`; ubuntu-latest; Python 3.11
+- [x] `pip install -r requirements-dev.txt`, then `pytest -q` and `coverage run --source=cqr -m pytest && coverage report --fail-under=100`
+- [x] README badge at the top of the file, pointing at the workflow on `main`
 
 ## B. LICENSE + third-party notices — commit `docs: add license and ABCD attribution`  → `<pending>`
 - [ ] `LICENSE` — MIT, copyright "Vikram Dham" 2026

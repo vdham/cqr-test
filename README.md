@@ -1,5 +1,7 @@
 # Conversation Quality Reviewer
 
+[![CI](https://github.com/vdham/cqr-test/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vdham/cqr-test/actions/workflows/ci.yml)
+
 Reads customer–agent transcripts, scores each on five anchored quality signals with rationale and turn citations, and exposes the results as an API, a CLI, and a small dashboard.
 
 Signals (see `TRADEOFFS.md` for why):
