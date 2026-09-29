@@ -333,6 +333,22 @@ class BatchAccepted(BaseModel):
     total: int
 
 
+class Reference(BaseModel):
+    """A canonical reference (agent guideline). Exposed via `GET /guidelines`
+    and `GET /guidelines/{flow}/{subflow}`; consumed by `resolve_reference`
+    when a caller sets `Transcript.reference_id` or when only `intent` is
+    known. `text` is the exact block the judge sees, so `version` (12-hex
+    sha256) is comparable with `Review.reference_version`."""
+    reference_id: str = Field(description="Stable id of the reference: '<flow_key>/<subflow_key>'.")
+    flow: str = Field(description="Human-readable flow title (e.g. 'Shipping Issue').")
+    subflow: str = Field(description="Human-readable subflow title (e.g. 'Missing Item').")
+    version: str = Field(description="sha256[:12] of `text`. Matches `Review.reference_version` when this reference scored the review.")
+    text: str = Field(description="The exact policy block the judge sees for correctness scoring.")
+    policy_lines: list[str] = Field(default_factory=list, description="Guideline steps that emit customer-facing communication or reference a policy (types 'communication', 'faq/policy').")
+    procedure_lines: list[str] = Field(default_factory=list, description="Internal tool-use steps (types 'interaction', 'kb query') that don't necessarily leave a trace in the transcript.")
+    source: str = Field(default="abcd-guidelines", description="Where this reference set was loaded from. Only 'abcd-guidelines' today.")
+
+
 class JudgeOutput(BaseModel):
     """The model-facing subset of Review — the fields the LLM actually
     produces. Provenance (`judge`, `rubric_version`, `transcript_id`, …) and

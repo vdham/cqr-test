@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import re
 import warnings
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .schema import Transcript, Turn
+from .schema import Reference, Transcript, Turn, reference_version
 
 
 # ------------------------------------------------------------- ABCD ---------
@@ -155,16 +156,153 @@ class GuidelineIndex:
         return best
 
     def reference_for(self, flow_key: str, subflow_key: str) -> Optional[str]:
+        """Backward-compatible fuzzy lookup — used by `_abcd_convo_to_transcript`
+        and the pre-004 tests. When flow_key + subflow_key resolve strictly,
+        this returns the same text as `get(reference_id).text`; when they
+        don't, `_find_subflow`'s alias + fuzzy fallback still gives a
+        best-effort match. Use `get()` when you need strict id semantics."""
         hit = self._find_subflow(flow_key, subflow_key)
         if not hit:
             return None
-        flow, sf, body = hit
-        lines = [f"FLOW: {flow} ({self.g[flow].get('description','')})", f"SUBFLOW: {sf}", "AGENT GUIDELINES:"]
-        for i, a in enumerate(body.get("actions", []), 1):
-            lines.append(f"  {i}. [{a.get('button','')}] {a.get('text','')}")
+        flow_title, sf, body = hit
+        return self._build_reference(
+            _FLOW_INVERSE.get(flow_title, flow_key), subflow_key, flow_title, sf, body,
+        ).text
+
+    def get(self, reference_id: str) -> Optional[Reference]:
+        """Fetch a single Reference by id ('flow_key/subflow_key'). Strict:
+        the flow_key must be a known ABCD flow, and (when kb.json is loaded)
+        the subflow_key must be in the canonical slug set. Fuzzy fallback is
+        only used for the *title-matching* step inside `_find_subflow`, not
+        for tolerating a wrong flow/slug pair."""
+        if "/" not in reference_id:
+            return None
+        flow_key, _, subflow_key = reference_id.partition("/")
+        if flow_key not in self.FLOW_KEYS:
+            return None
+        if self.valid_slugs is not None and subflow_key not in self.valid_slugs:
+            return None
+        hit = self._find_subflow(flow_key, subflow_key)
+        if not hit:
+            return None
+        flow_title, subflow_title, body = hit
+        # Strict: reject fuzzy matches to a different subflow. `_find_subflow`
+        # may fuzzy-match `shipping_issue/refund_status` to Shipping Status
+        # inside Shipping Issue. Verify the resolved subflow title's canonical
+        # slug equals the requested one.
+        if _subflow_title_to_slug(subflow_title) != subflow_key:
+            return None
+        return self._build_reference(flow_key, subflow_key, flow_title, subflow_title, body)
+
+    def list(self) -> list[Reference]:
+        """Return every reference in the loaded guideline set (55 for the
+        shipped ABCD file), sorted by reference_id.
+
+        When kb.json is loaded, iterate the canonical 55 slugs and forward-
+        resolve each. This guarantees `list()` returns exactly the slugs the
+        rest of the system recognises. Without kb.json, fall back to
+        iterating guideline titles and slug-ifying them (less precise for
+        aliases like 'return_size' vs 'return_due_to_size')."""
+        refs: list[Reference] = []
+        if self.valid_slugs is not None:
+            for slug in sorted(self.valid_slugs):
+                hit = self._find_subflow("", slug)
+                if hit is None:
+                    continue
+                flow_title, subflow_title, body = hit
+                flow_key = _FLOW_INVERSE.get(flow_title)
+                if flow_key is None:
+                    continue
+                refs.append(self._build_reference(flow_key, slug, flow_title, subflow_title, body))
+            return sorted(refs, key=lambda r: r.reference_id)
+        for flow_title, body in self.g.items():
+            flow_key = _FLOW_INVERSE.get(flow_title)
+            if flow_key is None:
+                continue
+            for subflow_title, subflow_body in body.get("subflows", {}).items():
+                subflow_key = _subflow_title_to_slug(subflow_title)
+                refs.append(self._build_reference(flow_key, subflow_key,
+                                                   flow_title, subflow_title, subflow_body))
+        return sorted(refs, key=lambda r: r.reference_id)
+
+    def _build_reference(self, flow_key: str, subflow_key: str,
+                          flow_title: str, subflow_title: str, body: dict) -> Reference:
+        # Build the same text `reference_for` used to build, but directly from
+        # the body dict (no re-search). Keeps `Reference.text` identical to
+        # what the judge sees; `Reference.version` therefore matches
+        # `Review.reference_version` for reviews scored against this ref.
+        desc = self.g.get(flow_title, {}).get("description", "")
+        lines = [f"FLOW: {flow_title} ({desc})", f"SUBFLOW: {subflow_title}",
+                 "AGENT GUIDELINES:"]
+        policy_lines: list[str] = []
+        procedure_lines: list[str] = []
+        for i, a in enumerate(body.get("actions", []) or [], 1):
+            atype = a.get("type", "")
+            button = a.get("button", "")
+            text = a.get("text", "")
+            lines.append(f"  {i}. [{button}] {text}")
             for st in a.get("subtext", []) or []:
                 lines.append(f"       - {st}")
-        return "\n".join(lines)
+            line = f"[{button}] {text}"
+            if atype in ("communication", "faq/policy"):
+                policy_lines.append(line)
+            elif atype in ("interaction", "kb query"):
+                procedure_lines.append(line)
+        text_blob = "\n".join(lines)
+        return Reference(
+            reference_id=f"{flow_key}/{subflow_key}",
+            flow=flow_title,
+            subflow=subflow_title,
+            version=reference_version(text_blob),
+            text=text_blob,
+            policy_lines=policy_lines,
+            procedure_lines=procedure_lines,
+            source="abcd-guidelines",
+        )
+
+
+# Reverse maps for enumerating references from guideline titles. Populated
+# once at import; if GuidelineIndex.FLOW_KEYS / ALIASES change, these must
+# be regenerated (they don't in practice — they're the same data files).
+_FLOW_INVERSE: dict[str, str] = {v: k for k, v in GuidelineIndex.FLOW_KEYS.items()}
+_ALIAS_INVERSE: dict[str, str] = {v: k for k, v in GuidelineIndex.ALIASES.items()}
+
+
+def _subflow_title_to_slug(title: str) -> str:
+    """Reverse of `_snake_to_title` with ALIAS exceptions. Some subflow titles
+    don't round-trip through snake_case ('Return Due to Size' <-> 'return_size',
+    'Boots FAQ' <-> 'boots'); ALIASES handles those. Everything else lowercases
+    and turns spaces/hyphens into underscores."""
+    if title in _ALIAS_INVERSE:
+        return _ALIAS_INVERSE[title]
+    s = title.lower().replace("-", "_").replace(" ", "_")
+    return re.sub(r"[^a-z0-9_]", "", s)
+
+
+# ------------------------------------------------- module-level index ----
+
+_INDEX: Optional[GuidelineIndex] = None
+
+
+def get_index() -> Optional[GuidelineIndex]:
+    """Load `data/abcd/guidelines.json` (or `$CQR_GUIDELINES`) once for the
+    process. Returns None if the file isn't present — callers should treat
+    that as "no reference set available" rather than an error."""
+    global _INDEX
+    if _INDEX is None:
+        path = Path(os.environ.get("CQR_GUIDELINES", "data/abcd/guidelines.json"))
+        if not path.exists():
+            return None
+        kb_path = path.parent / "kb.json"
+        _INDEX = GuidelineIndex.load(path, kb_path=kb_path if kb_path.exists() else None)
+    return _INDEX
+
+
+def _reset_index_for_tests() -> None:
+    """Drop the cached index so a monkeypatched `$CQR_GUIDELINES` in the next
+    call gets a fresh load. Only meant for tests."""
+    global _INDEX
+    _INDEX = None
 
 
 def _abcd_convo_to_transcript(c: dict, gi: Optional[GuidelineIndex]) -> Transcript:
