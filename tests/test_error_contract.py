@@ -51,6 +51,8 @@ EXPECTED_MATRIX: dict[tuple[str, str], set[int]] = {
     ("GET",  "/jobs/{id_}/reviews"): {200, 404, 422},
     ("GET",  "/reviews"):            {200, 422},        # 422 is FastAPI query-param validation
     ("GET",  "/reviews/{id_}"):      {200, 404, 422},
+    ("GET",  "/guidelines"):         {200},
+    ("GET",  "/guidelines/{flow_key}/{subflow_key}"): {200, 404, 422},
     ("GET",  "/health"):             {200},
 }
 

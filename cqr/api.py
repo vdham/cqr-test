@@ -30,9 +30,10 @@ from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
                      QueueFull, TranscriptRejected)
 from .jobs import JobRunner, wait_for_job
 from .judge import get_judge
+from .loader import get_index
 from .rubric import RUBRIC_VERSION
-from .schema import (BatchAccepted, BatchReviewRequest, ErrorBody, Job, Review,
-                     Transcript, reference_version, sort_key)
+from .schema import (BatchAccepted, BatchReviewRequest, ErrorBody, GuidelineSummary,
+                     Job, Reference, Review, Transcript, reference_version, sort_key)
 from .staleness import is_stale, load_guidelines
 from .store import Store
 
@@ -139,6 +140,8 @@ ERROR_RESPONSES: dict[str, dict[int, dict]] = {
     "get_job_reviews": {404: _ERR_404},
     "list_reviews":  {},
     "get_review":    {404: _ERR_404},
+    "list_guidelines": {},
+    "get_guideline": {404: _ERR_404},
     "health":        {},
 }
 
@@ -412,11 +415,61 @@ def get_review(id_: str):
     return {"transcript": t, "review": r}
 
 
+def _guidelines_block() -> dict:
+    """`/health`'s guidelines summary. Reports index size, source, and a
+    12-hex hash over all reference versions so a caller can detect that
+    the reference set has changed without re-fetching every entry."""
+    idx = get_index()
+    if idx is None:
+        return {"count": 0, "source": None, "index_version": "none"}
+    refs = idx.list()
+    concat = "".join(r.version for r in refs)
+    return {
+        "count": len(refs),
+        "source": refs[0].source if refs else None,
+        "index_version": reference_version(concat) if refs else "none",
+    }
+
+
+@app.get("/guidelines", response_model=list[GuidelineSummary], tags=["meta"],
+         summary="List all references (guideline summaries, no text)",
+         responses=ERROR_RESPONSES["list_guidelines"])
+def list_guidelines():
+    """Return one row per known reference: `{reference_id, flow, subflow,
+    version}`. Fetch the full text via `GET /guidelines/{flow_key}/{subflow_key}`.
+    Empty list when no guideline set is loaded."""
+    idx = get_index()
+    if idx is None:
+        return []
+    return [
+        GuidelineSummary(reference_id=r.reference_id, flow=r.flow,
+                         subflow=r.subflow, version=r.version)
+        for r in idx.list()
+    ]
+
+
+@app.get("/guidelines/{flow_key}/{subflow_key}", response_model=Reference,
+         tags=["meta"], summary="Fetch one reference by (flow_key, subflow_key)",
+         responses=ERROR_RESPONSES["get_guideline"])
+def get_guideline(flow_key: str, subflow_key: str):
+    """Return the full `Reference` (including `text`) or 404 `ErrorBody` if
+    the id doesn't resolve. Ids are strict — unknown flow, unknown slug,
+    or cross-flow mismatch all 404."""
+    idx = get_index()
+    if idx is None:
+        raise NotFoundError(f"no guidelines index loaded")
+    ref = idx.get(f"{flow_key}/{subflow_key}")
+    if ref is None:
+        raise NotFoundError(f"no reference for {flow_key}/{subflow_key}")
+    return ref
+
+
 @app.get("/health", tags=["meta"], summary="Liveness check",
          responses=ERROR_RESPONSES["health"])
 def health():
     """Basic liveness — no provider call. Reports which judge is configured
-    and, for LLM, which model."""
+    and, for LLM, which model. Also reports guidelines index size + version
+    and how many stored reviews are stale relative to the current world."""
     judge_env = os.environ.get("CQR_JUDGE") or ("llm" if (
         os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
@@ -436,6 +489,7 @@ def health():
         "runner_started": _runner is not None,
         "reviews": len(_store.all()),
         "stale_count": stale_count,
+        "guidelines": _guidelines_block(),
     }
 
 

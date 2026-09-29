@@ -5,10 +5,14 @@ import json
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from cqr import api
+from cqr.judge import HeuristicJudge
 from cqr.loader import (GuidelineIndex, _reset_index_for_tests,
                         _subflow_title_to_slug, get_index)
 from cqr.schema import Reference, reference_version
+from cqr.store import Store
 from tests.test_loader import KB_SLUG_TO_FLOW_AND_SUBFLOW
 
 
@@ -215,3 +219,81 @@ class TestGetIndex:
         idx = get_index()
         assert idx is not None
         assert idx.valid_slugs is None
+
+
+# ---------------------------------------------------------- HTTP surface ----
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    """Isolated per-test API. Guidelines default to the shipped file so
+    /guidelines returns real data; individual tests can point CQR_GUIDELINES
+    elsewhere via monkeypatch."""
+    monkeypatch.setattr(api, "_store", Store(tmp_path / "reviews.json"))
+    monkeypatch.setenv("CQR_JUDGE", "heuristic")
+    monkeypatch.setattr(api, "_judge", HeuristicJudge())
+    _reset_index_for_tests()
+    with TestClient(api.app) as c:
+        yield c
+    _reset_index_for_tests()
+
+
+class TestListGuidelinesEndpoint:
+    def test_returns_55_summaries(self, client):
+        r = client.get("/guidelines")
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body) == 55
+        first = body[0]
+        assert set(first.keys()) == {"reference_id", "flow", "subflow", "version"}
+        # No `text` field — that's the whole point of the list view.
+
+    def test_empty_when_no_index(self, tmp_path, monkeypatch, client):
+        monkeypatch.setenv("CQR_GUIDELINES", str(tmp_path / "nope.json"))
+        _reset_index_for_tests()
+        assert client.get("/guidelines").json() == []
+
+
+class TestGetGuidelineEndpoint:
+    def test_returns_full_reference(self, client):
+        r = client.get("/guidelines/shipping_issue/missing")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["reference_id"] == "shipping_issue/missing"
+        assert body["flow"] == "Shipping Issue"
+        assert body["subflow"] == "Missing Item"
+        assert len(body["version"]) == 12
+        assert "AGENT GUIDELINES:" in body["text"]
+        assert body["source"] == "abcd-guidelines"
+
+    def test_unknown_flow_returns_404_errorbody(self, client):
+        r = client.get("/guidelines/nope/missing")
+        assert r.status_code == 404
+        body = r.json()
+        assert body["error_type"] == "NotFound"
+        assert body["retryable"] is False
+
+    def test_unknown_slug_returns_404_errorbody(self, client):
+        r = client.get("/guidelines/shipping_issue/not_a_real_slug")
+        assert r.status_code == 404
+        assert r.json()["error_type"] == "NotFound"
+
+    def test_no_index_returns_404(self, tmp_path, monkeypatch, client):
+        monkeypatch.setenv("CQR_GUIDELINES", str(tmp_path / "nope.json"))
+        _reset_index_for_tests()
+        r = client.get("/guidelines/shipping_issue/missing")
+        assert r.status_code == 404
+
+
+class TestHealthGuidelines:
+    def test_guidelines_block_shape(self, client):
+        body = client.get("/health").json()
+        g = body["guidelines"]
+        assert g["count"] == 55
+        assert g["source"] == "abcd-guidelines"
+        assert isinstance(g["index_version"], str) and len(g["index_version"]) == 12
+
+    def test_guidelines_block_when_no_index(self, tmp_path, monkeypatch, client):
+        monkeypatch.setenv("CQR_GUIDELINES", str(tmp_path / "nope.json"))
+        _reset_index_for_tests()
+        g = client.get("/health").json()["guidelines"]
+        assert g == {"count": 0, "source": None, "index_version": "none"}

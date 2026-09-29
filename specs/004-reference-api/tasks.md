@@ -12,11 +12,11 @@ Work top to bottom. Tick each box in the same commit as the change.
 - [x] Tests (26): `Reference` shape; `_subflow_title_to_slug` alias/snake_case cases; `list()` returns 55; every kb slug's reference_id is in the list; `list()` sorted; every reference has version + text + source; policy/procedure lines populated; `get` known/unknown/malformed ids; bogus flow → None; bogus slug → None; cross-flow slug → None; defensive miss-when-subflow-empty; version matches hash of text; kb-less fallback list; `get_index` singleton + reset + no-kb
 
 ## B. Endpoints — commit `feat(api): GET /guidelines, GET /guidelines/{reference_id}`  → `<pending>`
-- [ ] `GET /guidelines` → list of `{reference_id, flow, subflow, version}` (55 rows, no text)
-- [ ] `GET /guidelines/{flow_key}/{subflow_key}` → full `Reference` | 404 `ErrorBody`
-- [ ] Add both routes to `cqr/api.py::ERROR_RESPONSES` and to `EXPECTED_MATRIX` in `tests/test_error_contract.py`
-- [ ] `GET /health` gains `guidelines: {count, source, index_version}` (index_version = sha256[:12] over all `Reference.version` values)
-- [ ] Tests: list endpoint returns 55 items with the four documented fields; get returns full `Reference`; unknown id → 404 `ErrorBody`; `/health.guidelines` shape
+- [x] `GET /guidelines` → `list[GuidelineSummary]` = 55 rows of `{reference_id, flow, subflow, version}` (no `text`)
+- [x] `GET /guidelines/{flow_key}/{subflow_key}` → full `Reference` | 404 `ErrorBody`; missing index → 404 (rather than crash)
+- [x] `ERROR_RESPONSES` gets `list_guidelines: {}` and `get_guideline: {404}`; `EXPECTED_MATRIX` in `test_error_contract` updated (both routes in the drift check)
+- [x] `GET /health` gains `guidelines: {count, source, index_version}` where `index_version = reference_version(concat of all Reference.version)` — 12-hex
+- [x] Tests: list returns 55 rows with the four documented fields; empty when index absent; get returns full Reference with text; unknown flow / unknown slug / missing index all 404 `ErrorBody`; health guidelines block populated + zeroed correctly
 
 ## C. Server-side resolution — commit `feat(judge): resolve reference by id or intent; record how`  → `<pending>`
 - [ ] `Transcript.reference_id: Optional[str] = None`

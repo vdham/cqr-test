@@ -333,6 +333,16 @@ class BatchAccepted(BaseModel):
     total: int
 
 
+class GuidelineSummary(BaseModel):
+    """One row of `GET /guidelines` — the list view. `text`/`policy_lines`/
+    `procedure_lines` are omitted to keep the response small; fetch the full
+    `Reference` from `GET /guidelines/{flow_key}/{subflow_key}` when needed."""
+    reference_id: str
+    flow: str
+    subflow: str
+    version: str
+
+
 class Reference(BaseModel):
     """A canonical reference (agent guideline). Exposed via `GET /guidelines`
     and `GET /guidelines/{flow}/{subflow}`; consumed by `resolve_reference`
