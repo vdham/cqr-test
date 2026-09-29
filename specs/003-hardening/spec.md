@@ -1,6 +1,6 @@
 # 003 — Hardening (evidence, credibility, cost)
 
-**Why.** Eight practices observed in the sibling prototype `vdham/nowsdk-plan-demo` that make a demo repo cheaper to run, more credible to a reviewer, and less likely to rot: CI evidence, an actual license and third-party attribution, README shape that answers "where do I look first," a timed demo script, prompt caching so a real run doesn't burn tokens, structured outputs so the model can't emit unparseable JSON, content-addressed review identity so re-running the same transcript doesn't re-bill the same tokens, and stale-review detection so a rubric change doesn't silently invalidate the store.
+**Why.** Eight practices that make a demo repo cheaper to run, more credible to a reviewer, and less likely to rot: CI evidence, an actual license and third-party attribution, README shape that answers "where do I look first," a timed demo script, prompt caching so a real run doesn't burn tokens, structured outputs so the model can't emit unparseable JSON, content-addressed review identity so re-running the same transcript doesn't re-bill the same tokens, and stale-review detection so a rubric change doesn't silently invalidate the store.
 
 Each item is independently useful and independently reversible. Taken together they turn "here's a working demo" into "here's a demo with the honesty of a small operational product."
 
