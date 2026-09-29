@@ -148,8 +148,10 @@ Synthetic-set eval scores (nine hand-labeled conversations, 22 anchored checks):
 
 | Judge | Model | Rubric | Eval |
 |---|---|---|---|
-| `heuristic` | (regex baseline) | 1.1 | 18/22 |
-| `llm` | `claude-sonnet-4-5` (via LiteLLM) | 1.1 | 22/22 |
+| `heuristic` | (regex baseline) | 1.3 | 18/22 |
+| `llm` | `claude-sonnet-4-5` (via LiteLLM) | 1.3 | 21/22 |
+
+The one miss on the LLM run is `syn-03` interaction_quality — the model scored `medium` where the label calls for `low`. A single-run drift on one edge case; not a regression.
 
 The LLM run is committed at `examples/reviews.anthropic.json` (filename is legacy; the `judge` field on each review is `llm:claude-sonnet-4-5`). Browse it in the dashboard with no key needed:
 
@@ -236,7 +238,7 @@ Any `Review` — however it was constructed (judge output, API request, test fix
 - **`needs_human_review`**: `true` iff any risk flag is `medium` or `high`, OR `correctness == contradicted`.
 - **`correctness`**: forced to `unverifiable` at judge time when the transcript has no `reference` (this one lives in `judge._finalize` since it depends on external context, not the review alone).
 
-Callers should never compute the derived fields themselves — supplied values are overwritten.
+Callers should never compute the derived fields themselves — supplied values are overwritten. Verified by [`tests/test_invariants.py`](tests/test_invariants.py): no value the model emits for the derived or versioning fields (`needs_human_review`, `sentiment_delta`, `correctness` when no reference, `schema_version`, `rubric_version`, `transcript_digest`, `reference_version`) can change the computed one.
 
 ### Error contract
 

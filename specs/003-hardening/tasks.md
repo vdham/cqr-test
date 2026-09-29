@@ -60,11 +60,12 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] TRADEOFFS §Versioning rewritten: three versions per review, stale detection, rereview — with a note that an automated LLM regression suite is the next step
 
 ## Invariant test + close-out — commit `test: name the model-cannot-override invariant; docs: close 003`  → `<pending>`
-- [ ] `tests/test_invariants.py` — feed `_finalize` model outputs that set `needs_human_review`, `sentiment_delta`, and `correctness` (no-reference case) to wrong values; assert computed Review ignores all three; assert digest/version fields do not depend on model output
-- [ ] README §Invariants: one sentence pointing at `test_invariants.py`
-- [ ] Fresh-clone acceptance: run `scripts/demo.sh`, `git status` clean afterwards
-- [ ] `STATUS.md`: 003 done, demo-readiness re-checked
-- [ ] `CHANGELOG.md`: 0.3 entry dated today listing A–H
+- [x] `tests/test_invariants.py` — 9 assertions across derived + versioning fields; model outputs setting `needs_human_review=False`, `sentiment_delta=-99`, `schema/rubric/reference_version` / `transcript_digest` to wrong values are all overridden by the schema
+- [x] README §Invariants: one sentence pointing at `tests/test_invariants.py`
+- [x] Refreshed `examples/reviews.anthropic.json` on rubric 1.3 with full usage data (`21/22` — one miss on `syn-03` interaction_quality)
+- [x] Fresh-clone-style acceptance: `scripts/demo.sh` runs to completion; `git status` clean afterwards
+- [x] `STATUS.md`: 003 done, demo-readiness re-checked
+- [x] `CHANGELOG.md`: `0.5 — 2026-09-28` entry listing A–H
 
 ## Acceptance
 - [ ] `pytest` green, `coverage report --fail-under=100` passes

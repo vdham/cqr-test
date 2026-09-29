@@ -3,6 +3,18 @@
 ## Unreleased
 - (nothing queued)
 
+## 0.5 — 2026-09-28
+- specs/003-hardening complete — eight practices for a demo repo that's cheaper to run and more credible:
+  - **A** (`ac72033`) GitHub Actions CI: pytest + `coverage report --fail-under=100` on push/PR/dispatch; README badge on `main`.
+  - **B** (`6a30464`) `LICENSE` (MIT, Vikram Dham 2026) + `THIRD_PARTY_NOTICES.md` reproducing ABCD's upstream MIT license (verified via `gh api repos/asappresearch/abcd/license`).
+  - **C** (`d191afa`) README grew Reading-order table, Expected-output block, Deliberate-scope section, and a five-item Design-principles list.
+  - **D** (`144b432`) `specs/DEMO.md` — 4:30 walkthrough script with click/say/notice per section.
+  - **E** (`63bcb41`) Cacheable prompt prefix: system+rubric and the reference block marked `cache_control: ephemeral` on Anthropic; batches enqueued in `(intent, id)` order so consecutive calls share the prefix; `Review.usage` + `Job.usage` record tokens and cost.
+  - **F** (`47054e3`) Structured outputs: `JudgeOutput` Pydantic model = the model-facing subset of `Review` (no provenance); passed as `response_format=json_schema strict`; graceful fallback on `UnsupportedParamsError`. Rubric bumped 1.2 → 1.3.
+  - **G** (`f66099f`) Content-addressed identity: `Transcript.digest()`, `SCHEMA_VERSION`, `Review.transcript_digest` / `reference_version` / `cache_hit`; `Store.find(...)` in-memory index; `POST /review?force=true`, `cqr review --force`.
+  - **H** (`1d566a6`) Stale-review detection: `cqr/staleness.py::is_stale`, `Review.stale` (computed at read time), `GET /reviews?stale=`, `stale_count` in `/health`, `cqr rereview [--stale|--all]`.
+  - Close-out: `tests/test_invariants.py` names the model-cannot-override invariant (nine assertions across derived + versioning fields).
+
 ## 0.4 — 2026-09-28
 - Close-out pass on the error contract and demo evidence:
   - `POST /review/batch` no longer errors when lifespan hasn't started the runner — it lazy-starts on the first submit. 429 is reserved for real `QueueFull`.
