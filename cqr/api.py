@@ -30,8 +30,9 @@ from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
                      QueueFull, TranscriptRejected)
 from .jobs import JobRunner, wait_for_job
 from .judge import get_judge
+from .rubric import RUBRIC_VERSION
 from .schema import (BatchAccepted, BatchReviewRequest, ErrorBody, Job, Review,
-                     Transcript, sort_key)
+                     Transcript, reference_version, sort_key)
 from .store import Store
 
 
@@ -273,11 +274,22 @@ _TRANSCRIPT_EXAMPLES = {
 @app.post("/review", response_model=Review, tags=["review"],
           summary="Review a single conversation",
           responses=ERROR_RESPONSES["review_one"])
-def review_one(t: Transcript = Body(openapi_examples=_TRANSCRIPT_EXAMPLES)):
+def review_one(t: Transcript = Body(openapi_examples=_TRANSCRIPT_EXAMPLES),
+               force: bool = Query(default=False, description="Bypass the content cache and re-run the judge even if a review already exists for this exact transcript + rubric + reference + judge.")):
     """Judge one transcript against the rubric. Returns a `Review` with per-signal
     levels, rationales, and turn citations. Blocks until the judge returns
-    (typically 5-15s for the LLM judge, <100ms for the heuristic judge)."""
-    r = judge().judge(t)
+    (typically 5-15s for the LLM judge, <100ms for the heuristic judge).
+
+    Content-addressed idempotency: two requests with the same body — identical
+    `id`, `source`, `intent`, `reference`, and `turns` — return the same
+    stored review on the second call, with `cache_hit: true` set on the
+    response body. Use `?force=true` to bypass and re-score."""
+    j = judge()
+    if not force:
+        hit = _store.find(t.digest(), RUBRIC_VERSION, reference_version(t.reference), j.name)
+        if hit is not None:
+            return hit.model_copy(update={"cache_hit": True})
+    r = j.judge(t)
     _store.put(t, r)
     _store.flush()
     return r

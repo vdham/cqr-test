@@ -8,6 +8,8 @@ batch protocol; the runtime that fulfils them lives in `cqr/jobs.py`.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from datetime import UTC, datetime
 from enum import Enum
@@ -17,6 +19,16 @@ from pydantic import BaseModel, Field, model_validator
 
 
 CQR_MAX_BATCH = int(os.environ.get("CQR_MAX_BATCH", "200"))
+SCHEMA_VERSION = "1.0"
+
+
+def reference_version(reference: str | None) -> str:
+    """12-hex sha256 of the reference text, or 'none' when there isn't one.
+    Short enough to be readable in `Review.reference_version`; long enough
+    that a rubric edit shows a different hash."""
+    if not reference:
+        return "none"
+    return hashlib.sha256(reference.encode()).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------- input ----
@@ -65,6 +77,22 @@ class Transcript(BaseModel):
 
     def render(self) -> str:
         return "\n".join(f"[{t.idx}] {t.speaker.upper()}: {t.text}" for t in self.turns)
+
+    def digest(self) -> str:
+        """sha256 over canonical JSON of the fields that would change what the
+        judge should say — id, source, intent, reference, turns. `metadata`
+        is deliberately excluded (it's provenance, not content). Canonical
+        JSON = sorted keys, no whitespace, so the digest is stable under
+        arbitrary key reordering in the caller's input."""
+        payload = {
+            "id": self.id,
+            "source": self.source,
+            "intent": self.intent,
+            "reference": self.reference,
+            "turns": [t.model_dump(mode="json") for t in self.turns],
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 # --------------------------------------------------------------- output ----
@@ -185,6 +213,13 @@ class Review(BaseModel):
     rubric_version: str = Field(description="Version of the rubric this review was scored against. Stamped by the judge.")
     job_id: Optional[str] = Field(default=None, description="If this review came from a batch job, the JobRunner id. None for single POST /review calls.")
     usage: Optional[Usage] = Field(default=None, description="Token counts and cost from the judge. None for the heuristic judge and for cached reviews (see cache_hit).")
+
+    # Content-addressed identity — additive, default empty for backward
+    # compatibility with pre-versioning stored reviews.
+    schema_version: str = Field(default="", description=f"CQR schema version this review was written against. Current: {SCHEMA_VERSION!r}. Empty for pre-versioning stored reviews.")
+    transcript_digest: str = Field(default="", description="sha256 of the transcript's content (id, source, intent, reference, turns). Empty for pre-versioning reviews.")
+    reference_version: str = Field(default="", description="12-hex sha256 of the reference text, or 'none' when no reference. Empty for pre-versioning reviews.")
+    cache_hit: bool = Field(default=False, description="Per-response flag: True when this review was served from the content cache (same digest + rubric + reference + judge as a prior call). Never persisted True.")
     needs_human_review: bool = Field(default=False, description="True when any risk flag is medium+ or correctness is contradicted. Always present — set by the Review validator.")
     summary: str = Field(default="", description="One line a supervisor can read in a list view")
 

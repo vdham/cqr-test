@@ -34,7 +34,8 @@ from .errors import (JudgeError, JudgeOutputInvalid, JudgeRejected,
                      JudgeUnavailable, TranscriptRejected)
 from .rubric import RUBRIC_VERSION, SYSTEM, build_messages, build_user_prompt
 from .schema import (Correctness, JudgeOutput, Level3, Resolution, Review, RiskFlag,
-                     RiskFlagType, SentimentPoint, SignalResult, Transcript, Usage)
+                     RiskFlagType, SCHEMA_VERSION, SentimentPoint, SignalResult,
+                     Transcript, Usage, reference_version)
 
 
 _SIGNAL_KEYS = ("resolution", "correctness", "customer_effort", "interaction_quality")
@@ -72,6 +73,9 @@ def _finalize(t: Transcript, raw: dict, judge_name: str) -> Review:
     raw["intent"] = t.intent
     raw["judge"] = judge_name
     raw["rubric_version"] = RUBRIC_VERSION
+    raw["schema_version"] = SCHEMA_VERSION
+    raw["transcript_digest"] = t.digest()
+    raw["reference_version"] = reference_version(t.reference)
 
     for key in _SIGNAL_KEYS:
         sig = raw.get(key)

@@ -29,7 +29,8 @@ from datetime import UTC, datetime
 from typing import Callable, Optional
 
 from .errors import JudgeError, QueueFull
-from .schema import Job, JobError, JobStatus, Review, Transcript
+from .rubric import RUBRIC_VERSION
+from .schema import Job, JobError, JobStatus, Review, Transcript, reference_version
 from .store import Store
 
 
@@ -147,6 +148,14 @@ class JobRunner:
             self._bump_completed(job)
             return
         try:
+            hit = self._store.find(t.digest(), RUBRIC_VERSION,
+                                    reference_version(t.reference), judge.name)
+            if hit is not None:
+                # Content cache hit: don't call the judge, don't charge usage.
+                # The stored review keeps its original job_id/persisted state;
+                # we record the hit against this job by bumping `completed`.
+                self._consec_retryable[job_id] = 0
+                return
             review = await asyncio.to_thread(judge.judge, t)
             review.job_id = job_id
             self._store.put(t, review)

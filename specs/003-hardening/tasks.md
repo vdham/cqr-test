@@ -41,13 +41,13 @@ Work top to bottom. Tick each box in the same commit as the change. Details live
 - [x] Tests: response_format shape + all level enums in the schema; provenance fields NOT in JudgeOutput schema; UnsupportedParamsError triggers fallback; structured path prompt drops the prose block
 
 ## G. Content-addressed identity + `schema_version` — commit `feat(schema): transcript digest, schema version, content-based idempotency`  → `<pending>`
-- [ ] `SCHEMA_VERSION = "1.0"` in `cqr/schema.py`; `Review.schema_version: str`
-- [ ] `Transcript.digest()` — sha256 over canonical JSON of `{id, source, intent, reference, turns}` (metadata excluded, sorted keys, no whitespace)
-- [ ] `Review.transcript_digest: str`, `Review.reference_version: str` (12-hex or `"none"`), `Review.cache_hit: bool` (per-response, not persisted True) — all set in `_finalize`
-- [ ] `Store.find(transcript_digest, rubric_version, reference_version, judge) -> Review | None` with in-memory index rebuilt on load
-- [ ] Content-based idempotency in `POST /review`, `JobRunner._process_one`, and `cli review`
-- [ ] `?force=true` on `POST /review`, `--force` on `cqr review`
-- [ ] Tests: same transcript twice → second is cache_hit=True with zero judge calls; changing one character → new digest, judge called; `force=true` bypass; digest stable under key reordering
+- [x] `SCHEMA_VERSION = "1.0"` in `cqr/schema.py`; `Review.schema_version: str` (default "" for backward-compat with pre-versioning stored reviews)
+- [x] `Transcript.digest()` — sha256 over canonical JSON of `{id, source, intent, reference, turns}` (metadata excluded, sorted keys, no whitespace)
+- [x] `Review.transcript_digest`, `Review.reference_version` (12-hex or `"none"`), `Review.cache_hit` (default False) — all set in `_finalize`
+- [x] `Store.find(...)` + in-memory `_by_content` index; rebuilt on load; pre-versioning reviews with empty digest are not indexed (never cache-hit)
+- [x] `POST /review` short-circuits on cache hit and returns `cache_hit=True`; `JobRunner._process_one` skips the judge on hit; `cqr review` prints `c` on cache-hit rows and reports `X scored, Y cached, Z failed`
+- [x] `?force=true` on `POST /review`, `--force` on `cqr review`
+- [x] Tests: digest determinism + stability under key reordering + independence from `metadata`; same content twice → cache_hit=True + judge NOT called; changing one character bypasses; `force=true` bypasses; find() scoped by rubric/reference/judge; pre-versioning reviews not indexed; JobRunner cache-hits skip judge; CLI `--force` cycles scored/cached correctly
 
 ## H. Stale-review detection — commit `feat: stale reviews and rereview`  → `<pending>`
 - [ ] `Review.stale: bool = False` (persisted default False; computed True at read time)

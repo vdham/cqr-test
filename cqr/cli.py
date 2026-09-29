@@ -29,7 +29,8 @@ from typing import Iterable, Optional
 from .errors import JudgeRejected
 from .judge import get_judge
 from .loader import load_abcd, load_jsonl
-from .schema import Review, Transcript, sort_key
+from .rubric import RUBRIC_VERSION
+from .schema import Review, Transcript, reference_version, sort_key
 from .store import Store
 
 
@@ -69,26 +70,32 @@ def _collect(args) -> list[Transcript]:
     return ts
 
 
-def _run_all(judge, ts: list[Transcript], concurrency: int):
-    """Yield (transcript, review_or_None, exception_or_None) as work completes.
-    Concurrency <=1 runs sequentially; higher uses a ThreadPoolExecutor. The
-    LLM/heuristic call is what parallelizes; the store stays single-threaded
-    in the caller loop."""
+def _run_all(judge, ts: list[Transcript], concurrency: int, store: Store | None = None,
+             force: bool = False):
+    """Yield (transcript, review_or_None, exception_or_None, cache_hit) as
+    work completes. When `store` is provided and `force=False`, transcripts
+    with a content-cache match are yielded from the store without calling
+    the judge — the returned review carries `cache_hit=True`."""
+
+    def _handle(t: Transcript):
+        if store is not None and not force:
+            hit = store.find(t.digest(), RUBRIC_VERSION,
+                              reference_version(t.reference), judge.name)
+            if hit is not None:
+                return t, hit.model_copy(update={"cache_hit": True}), None, True
+        try:
+            return t, judge.judge(t), None, False
+        except Exception as e:  # noqa: BLE001
+            return t, None, e, False
+
     if concurrency <= 1:
         for t in ts:
-            try:
-                yield t, judge.judge(t), None
-            except Exception as e:  # noqa: BLE001
-                yield t, None, e
+            yield _handle(t)
         return
     with ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futures = {ex.submit(judge.judge, t): t for t in ts}
+        futures = {ex.submit(_handle, t): t for t in ts}
         for future in as_completed(futures):
-            t = futures[future]
-            try:
-                yield t, future.result(), None
-            except Exception as e:  # noqa: BLE001
-                yield t, None, e
+            yield future.result()
 
 
 def cmd_review(args) -> int:
@@ -106,8 +113,11 @@ def cmd_review(args) -> int:
     ts = sorted(ts, key=lambda t: (t.intent or "", t.id))
     print(f"judge={judge.name}  transcripts={len(ts)}  concurrency={args.concurrency}  out={args.out}", file=sys.stderr)
     errors = 0
+    cached = 0
     t0 = time.time()
-    for i, (t, r, err) in enumerate(_run_all(judge, ts, args.concurrency), 1):
+    for i, (t, r, err, cache_hit) in enumerate(
+        _run_all(judge, ts, args.concurrency, store=store, force=args.force), 1
+    ):
         if isinstance(err, JudgeRejected):
             # Config-scope failure (bad key etc.): further items would fail
             # identically. Bail out immediately with a dedicated exit code.
@@ -119,15 +129,19 @@ def cmd_review(args) -> int:
             errors += 1
             print(f"x {t.id}: {type(err).__name__}: {err}", file=sys.stderr)
         else:
-            store.put(t, r)
+            if not cache_hit:
+                store.put(t, r)
+            else:
+                cached += 1
             flag = "!" if r.needs_human_review else " "
-            print(f"{flag} {t.id:28s} res={r.resolution.level.value:22s} corr={r.correctness.level.value:13s} "
+            marker = "c" if cache_hit else flag
+            print(f"{marker} {t.id:28s} res={r.resolution.level.value:22s} corr={r.correctness.level.value:13s} "
                   f"effort={r.customer_effort.level.value:6s} iq={r.interaction_quality.level.value:6s} "
                   f"flags={[f.type.value for f in r.risk_flags]}", file=sys.stderr)
         if i % 5 == 0:
             store.flush()
     store.flush()
-    print(f"done: {len(ts) - errors} ok, {errors} failed, {time.time() - t0:.1f}s", file=sys.stderr)
+    print(f"done: {len(ts) - errors - cached} scored, {cached} cached, {errors} failed, {time.time() - t0:.1f}s", file=sys.stderr)
     if errors:
         sys.exit(1)
     return 0
@@ -173,6 +187,8 @@ def main(argv=None) -> int:
                    help="delete --out before starting; otherwise reviews merge by transcript id")
     r.add_argument("--concurrency", type=int, default=1,
                    help="run judge calls in parallel across N threads (default: 1)")
+    r.add_argument("--force", action="store_true",
+                   help="bypass the content cache and re-run the judge for every transcript")
     r.set_defaults(fn=cmd_review)
 
     s = sub.add_parser("show", help="print a stored review set, riskiest first")
